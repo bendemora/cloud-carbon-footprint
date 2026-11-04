@@ -7,7 +7,7 @@
     "start": "concurrently \"yarn start-client\" \"yarn start-api\"",
     "start-client": "BROWSER=none REACT_APP_TEST_MODE=true yarn workspace @cloud-carbon-footprint/client start",
     "start-api": "TEST_MODE=true CACHE_MODE=LOCAL ENABLE_CORS=false yarn workspace @cloud-carbon-footprint/api start",
-    "headless": "testcafe 'chromium:headless' 'tests/*test.js'",
+    "headless": "testcafe 'chrome:headless' 'tests/*test.js'",
     "headed": "testcafe 'chrome'",
     "precommit": "lint-staged --no-stash && yarn headless",
     "lint": "eslint '*/*.js' --quiet",

@@ -1,0 +1,21 @@
+diff --git a/config/webpackDevServer.config.js b/config/webpackDevServer.config.js
+index 522a81b9b2b2723822513390a9d7e0fc38f75066..12e0f99cca0dbfb01449c0ccc9d40a1e74007270 100644
+--- a/config/webpackDevServer.config.js
++++ b/config/webpackDevServer.config.js
+@@ -43,7 +43,15 @@ module.exports = function (proxy, allowedHost) {
+     // really know what you're doing with a special environment variable.
+     // Note: ["localhost", ".localhost"] will support subdomains - but we might
+     // want to allow setting the allowedHosts manually for more complex setups
+-    allowedHosts: disableFirewall ? 'all' : [allowedHost],
++    // Patched in this fork: allowedHost is undefined when the machine's primary
++    // IPv4 is not an RFC 1918 private address (containers, CGNAT/VPN ranges),
++    // and webpack-dev-server rejects [undefined]. 'auto' is its own default
++    // and still only allows localhost and the configured host.
++    allowedHosts: disableFirewall
++      ? 'all'
++      : allowedHost
++      ? [allowedHost]
++      : 'auto',
+     headers: {
+       'Access-Control-Allow-Origin': '*',
+       'Access-Control-Allow-Methods': '*',

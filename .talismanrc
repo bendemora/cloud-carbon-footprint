@@ -43,6 +43,8 @@ fileignoreconfig:
   checksum: 25a0d187448d82a3d34072fbbc53da48a978938344c17b567b6b3e4ab55cbd21
 - filename: .yarn/plugins/@yarnpkg/plugin-outdated.cjs
   checksum: 3bfb33cac24525b03528d71814b90abc6e0bf7cdcd9e95f6aae8d342d3666268
+- filename: .yarn/patches/react-scripts-npm-5.0.1-d06bd2d5ad.patch
+  checksum: a824034505ded5de43b416ca063471f1a5c1cacb323017c362e38789e4464214
 - filename: CONTRIBUTING.md
   checksum: 454a26b0f80e1406f9f80ab12bd11183ebbf54a8b387c8667af258eeafb89ba7
 - filename: README.md
@@ -140,7 +142,7 @@ fileignoreconfig:
 - filename: packages/api/estimates.cache.test.json
   checksum: 47701f39ac93d11ebf30ebc3eb7499971094144b82bbd558aebdaa551d8228f3
 - filename: packages/api/mock-estimates.json
-  checksum: 51ef416cbeff6509a17f0dd86235154f37fe3737124ba92ccec63cdc1396e370
+  checksum: 83dc61454e56709912a78f8d221bd36fc66965da2c2346bf0bc6ddb5b04063c9
 - filename: packages/api/package.json
   checksum: 3fd7ec81bfa309f1d01ae0eadb695a418850e671d148715ae4259e14706491f5
 - filename: packages/api/src/api.test.ts
