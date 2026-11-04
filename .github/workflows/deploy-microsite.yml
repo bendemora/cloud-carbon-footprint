@@ -12,6 +12,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   deploy-microsite:
+    if: github.repository == 'cloud-carbon-footprint/cloud-carbon-footprint'
     runs-on: ubuntu-latest
 
     strategy:

@@ -140,6 +140,7 @@ jobs:
           path: dist-workspace.zip
   release:
     needs: build
+    if: github.repository == 'cloud-carbon-footprint/cloud-carbon-footprint'
     runs-on: ubuntu-latest
     env:
       CI: 'true'
@@ -235,7 +236,7 @@ jobs:
             cloudcarbonfootprint/api:${{ steps.create_tag.outputs.tag_name }}
             cloudcarbonfootprint/api:latest
   deploy-staging:
-    if: github.ref == 'refs/heads/trunk'
+    if: github.ref == 'refs/heads/trunk' && github.repository == 'cloud-carbon-footprint/cloud-carbon-footprint'
     needs: build
     runs-on: ubuntu-latest
     container:

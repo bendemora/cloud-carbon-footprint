@@ -252,7 +252,7 @@ jobs:
   # --- Release (npm publish + Docker API/client) ---
   release:
     needs: [backend-build, frontend-build]
-    if: github.event.pull_request.merged == true && github.event.pull_request.head.ref == 'changeset-release/trunk'
+    if: github.event.pull_request.merged == true && github.event.pull_request.head.ref == 'changeset-release/trunk' && github.repository == 'cloud-carbon-footprint/cloud-carbon-footprint'
     runs-on: ubuntu-latest
     env:
       CI: 'true'
@@ -342,7 +342,7 @@ jobs:
   # --- Backend deploy (API only) ---
   backend-deploy-staging:
     needs: backend-build
-    if: github.ref == 'refs/heads/trunk'
+    if: github.ref == 'refs/heads/trunk' && github.repository == 'cloud-carbon-footprint/cloud-carbon-footprint'
     runs-on: ubuntu-latest
     concurrency:
       group: app-engine-deploy
@@ -497,7 +497,7 @@ jobs:
   # --- Frontend deploy (client only) ---
   frontend-deploy-staging:
     needs: frontend-build
-    if: github.ref == 'refs/heads/trunk'
+    if: github.ref == 'refs/heads/trunk' && github.repository == 'cloud-carbon-footprint/cloud-carbon-footprint'
     runs-on: ubuntu-latest
     concurrency:
       group: app-engine-deploy
