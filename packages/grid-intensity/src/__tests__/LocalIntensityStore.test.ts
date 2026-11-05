@@ -14,7 +14,7 @@ import {
 } from 'fs/promises'
 import fsPromises from 'fs/promises'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { join, relative } from 'path'
 import { LocalIntensityStore } from '../stores/LocalIntensityStore'
 import { Granularity, IntensityPoint } from '../types'
 
@@ -323,7 +323,8 @@ describe('LocalIntensityStore', () => {
 
     it('keeps every point when two stores on one directory write at once', async () => {
       const first = new LocalIntensityStore(directory)
-      const second = new LocalIntensityStore(`${directory}/`)
+      // The same directory spelled relative to the working directory.
+      const second = new LocalIntensityStore(relative(process.cwd(), directory))
       await Promise.all([
         first.put(hourly('2026-10-01T00:00:00.000Z')),
         second.put(hourly('2026-10-02T00:00:00.000Z')),
@@ -359,6 +360,26 @@ describe('LocalIntensityStore', () => {
       ])
     })
 
+    it("leaves another writer's temporary file alone when its name is taken", async () => {
+      const store = new LocalIntensityStore(directory)
+      const taken = Object.assign(new Error('EEXIST: file already exists'), {
+        code: 'EEXIST',
+      })
+      const write = jest
+        .spyOn(fsPromises, 'writeFile')
+        .mockRejectedValueOnce(taken)
+      const remove = jest.spyOn(fsPromises, 'rm')
+      try {
+        await expect(
+          store.put(hourly('2026-10-01T00:00:00.000Z', 1)),
+        ).rejects.toThrow('EEXIST')
+        expect(remove).not.toHaveBeenCalled()
+      } finally {
+        write.mockRestore()
+        remove.mockRestore()
+      }
+    })
+
     it('removes its temporary file when a write fails', async () => {
       const store = new LocalIntensityStore(directory)
       await store.put(hourly('2026-10-01T00:00:00.000Z', 1))
@@ -380,6 +401,43 @@ describe('LocalIntensityStore', () => {
   })
 
   describe('ids that differ only in case', () => {
+    it('serialises their writes, so neither is lost without an error', async () => {
+      // On a case-insensitive file system both puts are for one file: the
+      // second must see the first one's header and fail. On a case-sensitive
+      // one they are two files and both succeed.
+      await writeFile(join(directory, 'CaseProbe'), '')
+      const caseInsensitive = await fsPromises
+        .access(join(directory, 'caseprobe'))
+        .then(
+          () => true,
+          () => false,
+        )
+      const store = new LocalIntensityStore(directory)
+      const results = await Promise.allSettled([
+        store.put(hourly('2026-10-01T00:00:00.000Z', 2)),
+        store.put(
+          hourly('2026-10-01T02:00:00.000Z', 1).map((p) => ({
+            ...p,
+            zoneId: 'gb',
+          })),
+        ),
+      ])
+      expect(results.map((r) => r.status)).toEqual(
+        caseInsensitive
+          ? ['fulfilled', 'rejected']
+          : ['fulfilled', 'fulfilled'],
+      )
+      await expect(
+        store.get(
+          'electricitymaps',
+          'GB',
+          utc('2026-10-01T00:00:00.000Z'),
+          utc('2026-10-02T00:00:00.000Z'),
+          'hour',
+        ),
+      ).resolves.toHaveLength(2)
+    })
+
     // A case-insensitive file system (the macOS default) resolves the path of
     // zone 'gb' to the directory of zone 'GB'. Simulated here by writing
     // zone GB's file where zone gb's file would be, so the test behaves the
@@ -465,6 +523,24 @@ describe('LocalIntensityStore', () => {
       expect(
         (await readdir(join(directory, 'electricitymaps', 'DE'))).sort(),
       ).toEqual(['.DS_Store', 'notes'])
+    })
+
+    it('keeps a temporary file changed in the last hour, even with a cut-off in the future', async () => {
+      const store = new LocalIntensityStore(directory)
+      await store.put(
+        hourly('2026-10-01T00:00:00.000Z', 1).map((p) => ({
+          ...p,
+          zoneId: 'DE',
+        })),
+      )
+      const zoneDirectory = join(directory, 'electricitymaps', 'DE')
+      const inFlight = join(zoneDirectory, '2026-10.hour.json.4243-1.tmp')
+      await writeFile(inFlight, '{"version":1,"poi')
+      const tomorrow = new Date(Date.now() + 24 * 3600 * 1000)
+      await store.purge('electricitymaps', tomorrow)
+      expect(await readdir(zoneDirectory)).toEqual([
+        '2026-10.hour.json.4243-1.tmp',
+      ])
     })
 
     it('removes temporary files last changed before the cut-off and keeps newer ones', async () => {
