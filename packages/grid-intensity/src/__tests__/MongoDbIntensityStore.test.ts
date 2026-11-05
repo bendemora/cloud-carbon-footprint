@@ -154,6 +154,42 @@ describe('MongoDbIntensityStore', () => {
     expect(client.connect).toHaveBeenCalledTimes(1)
   })
 
+  it('connects again once five minutes have passed since a failed connection', async () => {
+    const { client } = fakeClient()
+    client.connect.mockRejectedValueOnce(new Error('ECONNREFUSED'))
+    let now = 0
+    const store = new MongoDbIntensityStore(
+      client as unknown as MongoClient,
+      'ccf',
+      { now: () => now },
+    )
+    const purge = () => store.purge('neso', utc('2026-11-01'))
+    await expect(purge()).rejects.toThrow('ECONNREFUSED')
+    now += 4 * 60 * 1000
+    await expect(purge()).rejects.toThrow('ECONNREFUSED')
+    expect(client.connect).toHaveBeenCalledTimes(1)
+
+    now += 60 * 1000
+    await expect(purge()).resolves.toBe(3)
+    await expect(purge()).resolves.toBe(3)
+    expect(client.connect).toHaveBeenCalledTimes(2)
+  })
+
+  it('also retries after a failure to create the index', async () => {
+    const { client, collection } = fakeClient()
+    collection.createIndex.mockRejectedValueOnce(new Error('not authorized'))
+    let now = 0
+    const store = new MongoDbIntensityStore(
+      client as unknown as MongoClient,
+      'ccf',
+      { now: () => now, reconnectAfterMs: 1000 },
+    )
+    await expect(store.put([point()])).rejects.toThrow('not authorized')
+    now += 1000
+    await expect(store.put([point()])).resolves.toBeUndefined()
+    expect(collection.createIndex).toHaveBeenCalledTimes(2)
+  })
+
   it('closes the client', async () => {
     const { client } = fakeClient()
     await storeWith(client).close()

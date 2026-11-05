@@ -3,8 +3,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { mkdir, readdir, readFile, rename, rm, writeFile } from 'fs/promises'
-import { join } from 'path'
+import { Dirent } from 'fs'
+import {
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from 'fs/promises'
+import { dirname, join, resolve } from 'path'
 import { periodsCovering, startOfPeriod } from '../granularity'
 import {
   EmissionFactorType,
@@ -80,12 +89,66 @@ const fromStored = (file: StoreFile, p: StoredPoint): IntensityPoint => ({
 const isMissing = (error: unknown): boolean =>
   (error as NodeJS.ErrnoException)?.code === 'ENOENT'
 
+/** `<YYYY-MM>.<granularity>.json`, or `<YYYY>.year.json`. */
+const STORE_FILE = /^\d{4}(-\d{2})?\.(hour|day|month|year)\.json$/
+/** What write() leaves when the process stops between write and rename. */
+const TEMPORARY_FILE =
+  /^(\d{4}(-\d{2})?\.(hour|day|month|year)\.json)\..+\.tmp$/
+
+/**
+ * The first id a store file disagrees on, or null. On a case-insensitive
+ * file system (the macOS default) the paths of ids that differ only in case
+ * are the same file, so the ids in the file are the ones that count.
+ */
+const mismatch = (
+  file: StoreFile,
+  sourceId: string,
+  zoneId: string,
+): string | null => {
+  if (file.sourceId !== sourceId)
+    return `source '${file.sourceId}', not '${sourceId}'`
+  if (file.zoneId !== zoneId) return `zone '${file.zoneId}', not '${zoneId}'`
+  return null
+}
+
+/*
+ * Read-merge-write cycles on one file run one at a time within the process,
+ * across every store on the same directory: GCP Recommendations resolves
+ * rows concurrently, and the API serves overlapping requests.
+ */
+const fileQueues = new Map<string, Promise<void>>()
+let writeSequence = 0
+
+const exclusively = async <T>(
+  path: string,
+  task: () => Promise<T>,
+): Promise<T> => {
+  const queued = resolve(path)
+  const result = (fileQueues.get(queued) ?? Promise.resolve()).then(task)
+  const settled = result.then(
+    () => undefined,
+    () => undefined,
+  )
+  fileQueues.set(queued, settled)
+  try {
+    return await result
+  } finally {
+    if (fileQueues.get(queued) === settled) fileQueues.delete(queued)
+  }
+}
+
 /**
  * The LOCAL store (design section 6.6): one JSON file per source, zone,
  * granularity and calendar month, at
  * `<directory>/<source>/<zone>/<YYYY-MM>.<granularity>.json`. No native
  * dependencies. Store files may hold licensed data and must not be
  * committed; `.ccf/` is in .gitignore.
+ *
+ * Writes to one file are serialised within a process. Writers in different
+ * processes (a CLI run and the API on one directory) are not: each write is
+ * a rename, so no file is ever half-written, but the later rename wins and
+ * the other process's points for that month are fetched again when next
+ * needed.
  */
 export class LocalIntensityStore implements IntensityStore {
   constructor(private readonly directory: string = DEFAULT_STORE_PATH) {}
@@ -112,7 +175,7 @@ export class LocalIntensityStore implements IntensityStore {
           granularity,
         ),
       )
-      if (!file) continue
+      if (!file || mismatch(file, sourceId, zoneId)) continue
       for (const stored of file.points) {
         const point = fromStored(file, stored)
         if (point.periodStart < end && point.periodEnd > start)
@@ -137,44 +200,104 @@ export class LocalIntensityStore implements IntensityStore {
     }
     for (const [path, filePoints] of byFile) {
       const { sourceId, zoneId, granularity } = filePoints[0]
-      const existing = await this.read(path)
-      const merged = new Map<string, StoredPoint>()
-      for (const stored of existing?.points ?? [])
-        merged.set(stored.periodStart, stored)
-      for (const point of filePoints)
-        merged.set(point.periodStart.toISOString(), toStored(point))
-      await this.write(path, {
-        version: FORMAT_VERSION,
-        sourceId,
-        zoneId,
-        granularity,
-        points: [...merged.values()].sort((a, b) =>
-          a.periodStart.localeCompare(b.periodStart),
-        ),
+      await exclusively(path, async () => {
+        const existing = await this.read(path)
+        const conflict = existing && mismatch(existing, sourceId, zoneId)
+        if (conflict)
+          throw new Error(
+            `Grid intensity store file ${path} holds ${conflict}. On a case-insensitive file system, ids that differ only in case share a file, so these points are not stored.`,
+          )
+        const merged = new Map<string, StoredPoint>()
+        for (const stored of existing?.points ?? [])
+          merged.set(stored.periodStart, stored)
+        for (const point of filePoints)
+          merged.set(point.periodStart.toISOString(), toStored(point))
+        await this.write(path, {
+          version: FORMAT_VERSION,
+          sourceId,
+          zoneId,
+          granularity,
+          points: [...merged.values()].sort((a, b) =>
+            a.periodStart.localeCompare(b.periodStart),
+          ),
+        })
       })
     }
   }
 
-  /** Removes the source's points retrieved before `olderThan`. */
+  /**
+   * Removes the source's points retrieved before `olderThan`, and temporary
+   * files last changed before it (left by a process that stopped mid-write).
+   * Files and directories the store did not write are skipped. A file that
+   * cannot be read does not stop the purge of the others; the purge then
+   * fails naming it.
+   */
   async purge(sourceId: string, olderThan: Date): Promise<number> {
     const sourceDirectory = join(this.directory, segment(sourceId))
     let removed = 0
+    const failures: string[] = []
     for (const zone of await this.list(sourceDirectory)) {
-      const zoneDirectory = join(sourceDirectory, zone)
-      for (const name of await this.list(zoneDirectory)) {
-        const path = join(zoneDirectory, name)
-        const file = await this.read(path)
-        if (!file) continue
-        const kept = file.points.filter(
-          (p) => new Date(p.retrievedAt) >= olderThan,
-        )
-        if (kept.length === file.points.length) continue
-        removed += file.points.length - kept.length
-        if (kept.length) await this.write(path, { ...file, points: kept })
-        else await rm(path)
+      if (!zone.isDirectory()) continue
+      const zoneDirectory = join(sourceDirectory, zone.name)
+      try {
+        for (const entry of await this.list(zoneDirectory)) {
+          if (!entry.isFile()) continue
+          const path = join(zoneDirectory, entry.name)
+          const temporary = TEMPORARY_FILE.exec(entry.name)
+          try {
+            if (STORE_FILE.test(entry.name))
+              removed += await this.purgeFile(path, olderThan)
+            else if (temporary)
+              await this.removeIfOlder(
+                path,
+                join(zoneDirectory, temporary[1]),
+                olderThan,
+              )
+          } catch (error) {
+            failures.push((error as Error).message)
+          }
+        }
+      } catch (error) {
+        failures.push((error as Error).message)
       }
     }
+    if (failures.length)
+      throw new Error(
+        `Grid intensity store purge for ${sourceId} could not purge ${failures.length} of the store's paths (points removed from the others: ${removed}): ${failures.join('; ')}`,
+      )
     return removed
+  }
+
+  private purgeFile(path: string, olderThan: Date): Promise<number> {
+    return exclusively(path, async () => {
+      const file = await this.read(path)
+      if (!file) return 0
+      const kept = file.points.filter(
+        (p) => new Date(p.retrievedAt) >= olderThan,
+      )
+      if (kept.length === file.points.length) return 0
+      if (kept.length) await this.write(path, { ...file, points: kept })
+      else await rm(path, { force: true })
+      return file.points.length - kept.length
+    })
+  }
+
+  /**
+   * Under the lock of the file it was for, so no write in this process is
+   * cut off. A file another process has renamed meanwhile is skipped.
+   */
+  private removeIfOlder(
+    temporary: string,
+    target: string,
+    olderThan: Date,
+  ): Promise<void> {
+    return exclusively(target, async () => {
+      const changed = await stat(temporary).then(
+        (stats) => stats.mtime,
+        () => null,
+      )
+      if (changed && changed < olderThan) await rm(temporary, { force: true })
+    })
   }
 
   private filePath(
@@ -211,17 +334,25 @@ export class LocalIntensityStore implements IntensityStore {
     }
   }
 
-  /** Writes to a temporary file and renames it, so a crash leaves no half-written file. */
+  /**
+   * Writes to a temporary file named for this process and write, then
+   * renames it into place, so a crash leaves no half-written store file.
+   */
   private async write(path: string, file: StoreFile): Promise<void> {
-    await mkdir(join(path, '..'), { recursive: true })
-    const temporary = `${path}.${process.pid}.tmp`
-    await writeFile(temporary, JSON.stringify(file))
-    await rename(temporary, path)
+    await mkdir(dirname(path), { recursive: true })
+    const temporary = `${path}.${process.pid}-${++writeSequence}.tmp`
+    try {
+      await writeFile(temporary, JSON.stringify(file), { flag: 'wx' })
+      await rename(temporary, path)
+    } catch (error) {
+      await rm(temporary, { force: true })
+      throw error
+    }
   }
 
-  private async list(directory: string): Promise<string[]> {
+  private async list(directory: string): Promise<Dirent[]> {
     try {
-      return await readdir(directory)
+      return await readdir(directory, { withFileTypes: true })
     } catch (error) {
       if (isMissing(error)) return []
       throw error
