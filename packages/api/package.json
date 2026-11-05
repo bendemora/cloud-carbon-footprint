@@ -75,6 +75,7 @@
   "dependencies": {
     "@cloud-carbon-footprint/app": "^2.0.0",
     "@cloud-carbon-footprint/common": "^2.0.0",
+    "@cloud-carbon-footprint/grid-intensity": "^0.0.0",
     "@types/express": "^4.17.12",
     "cors": "^2.8.5",
     "express": "^4.17.1",

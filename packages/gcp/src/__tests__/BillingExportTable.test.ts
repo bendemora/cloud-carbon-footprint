@@ -19,7 +19,8 @@ import {
   UnknownEstimator,
 } from '@cloud-carbon-footprint/core'
 
-import { GCP_CLOUD_CONSTANTS } from '../domain'
+import { GCP_CLOUD_CONSTANTS, getGCPEmissionsFactors } from '../domain'
+import { GCP_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES } from '../lib/GCPRegions'
 import BillingExportTable, { buildTagQuery } from '../lib/BillingExportTable'
 import {
   mockQueryAppEngineComputeUnknownRegion,
@@ -45,6 +46,19 @@ import {
   mockQueryResultsWithTags,
 } from './fixtures/bigQuery.fixtures'
 import { lookupTableInputData } from './fixtures/lookupTable.fixtures'
+
+// Records the grid intensity calls and delegates to the real adapter.
+const mockResolveCalls: unknown[][] = []
+jest.mock('@cloud-carbon-footprint/grid-intensity', () => {
+  const actual = jest.requireActual('@cloud-carbon-footprint/grid-intensity')
+  return {
+    ...actual,
+    resolveEmissionsFactors: (...args: unknown[]) => {
+      mockResolveCalls.push(args)
+      return actual.resolveEmissionsFactors(...args)
+    },
+  }
+})
 
 const mockJob = { getQueryResults: jest.fn() }
 const mockCreateQueryJob = jest.fn().mockResolvedValue([mockJob, 'test-job-id'])
@@ -123,6 +137,58 @@ describe('GCP BillingExportTable Service', () => {
       },
     ]
     expect(result).toEqual(expectedResult)
+  })
+
+  it("resolves grid intensity over each usage row's period with the GCP table", async () => {
+    // getEstimates replaces each row's tags in place, and the first test in
+    // this file already ran it on this fixture. These rows have no tags of
+    // their own, so a copy without them is the original fixture.
+    mockJob.getQueryResults.mockResolvedValue(
+      structuredClone(mockQueryResultsAppEngineSSDStorage).map((page) =>
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        page.map(({ tags, ...row }) => row),
+      ),
+    )
+    mockResolveCalls.length = 0
+
+    await new BillingExportTable(
+      new ComputeEstimator(),
+      new StorageEstimator(GCP_CLOUD_CONSTANTS.SSDCOEFFICIENT),
+      new StorageEstimator(GCP_CLOUD_CONSTANTS.HDDCOEFFICIENT),
+      new NetworkingEstimator(GCP_CLOUD_CONSTANTS.NETWORKING_COEFFICIENT),
+      new MemoryEstimator(GCP_CLOUD_CONSTANTS.MEMORY_COEFFICIENT),
+      new UnknownEstimator(GCP_CLOUD_CONSTANTS.ESTIMATE_UNKNOWN_USAGE_BY),
+      new EmbodiedEmissionsEstimator(
+        GCP_CLOUD_CONSTANTS.SERVER_EXPECTED_LIFESPAN,
+      ),
+      new BigQuery(),
+    ).getEstimates(startDate, endDate, grouping)
+
+    expect(mockResolveCalls.length).toBeGreaterThan(0)
+    for (const [
+      provider,
+      region,
+      start,
+      end,
+      table,
+      options,
+    ] of mockResolveCalls as [
+      string,
+      string,
+      Date,
+      Date,
+      unknown,
+      { legacyElectricityMapsZones: unknown },
+    ][]) {
+      expect(provider).toBe('GCP')
+      expect(region).toEqual(expect.any(String))
+      // a day grouping: one whole day from the row's timestamp, exclusive end
+      expect(end.getTime() - start.getTime()).toBe(24 * 60 * 60 * 1000)
+      expect(table).toEqual({ factors: getGCPEmissionsFactors })
+      expect(options.legacyElectricityMapsZones).toBe(
+        GCP_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
+      )
+    }
   })
 
   it('Returns estimation results for Cloud SQL SSD Storage, Compute Engine and Cloud Dataflow HDD', async () => {
