@@ -106,7 +106,7 @@ fileignoreconfig:
 - filename: docker/nginx.conf
   checksum: a4632d785a11f199217d4229a40eba5a38180d9945d96799dc9b5efc6a3bc06e
 - filename: docs/design/2026-11-localised-time-resolved-carbon-estimation.md
-  checksum: ac9ecec26df09c22c529d37c43f19dad72d4b71d1aa1630e350a8a635970f40e
+  checksum: 9a8b94291faebc624e566a1ce5f40ed5da7da5baaf9117e8bfa9489f7d627990
 - filename: microsite/blog/2023-08-23-ccf-on-vm.md
   checksum: 84e94d40daf06c50f7b0e26d8d73a300d967279a87612e991e417530bfb8774c
 - filename: microsite/docs/ClassifyingUsageTypes.md
@@ -340,9 +340,9 @@ fileignoreconfig:
 - filename: packages/common/src/Config.ts
   checksum: 8cde1d40a5a56e3f1454534817d254a7b61baf2d28e185bf0c5093d8320c8b85
 - filename: packages/common/src/EmissionsFactors.ts
-  checksum: e28dbaf55e4a2a02ec43a1adfad5b060774a5dcd1c872b9bb5e28727e26f8de7
+  checksum: e34b4cc1bd5840fe11a94e5fe4ca20eeee6aebd999815385f9499c1473898537
 - filename: packages/common/src/__tests__/EmissionsFactors.test.ts
-  checksum: b513f4119cae71648485f3f3d6795f1062f361f45028deaddfa506132a0a49cb
+  checksum: c7942c351d96d9f2c921452ca69718ef551ceec998207959f00d1e8332a774fa
 - filename: packages/core/package.json
   checksum: c0f3b35fe6ca5f0bb14a34ccda0ed917ed97c03b116190210f4da82628891706
 - filename: packages/core/src/CloudConstantsTypes.ts
@@ -495,7 +495,7 @@ fileignoreconfig:
 - filename: packages/grid-intensity/src/stores/MongoDbIntensityStore.ts
   checksum: efd342424c133d97e5c209eb8054f509a1296f8ba62c50f81fdffc5c74e3dab0
 - filename: .changeset/phase1-review-fixes.md
-  checksum: 9df23b2bba88eb37beccca4fb0a30e949eef3eca854e03661f0cbebce552a3d3
+  checksum: aa5b2294d6bd2e9ef42dff118246cafcd9f9729a9e2c7000fe7450a6de1d91a7
 - filename: packages/grid-intensity/src/stores/createIntensityStore.ts
   checksum: ba8f026843b80a390e7d4e9d570e35628ce72f2f9078ba96a9aec576f2bb7910
 - filename: packages/grid-intensity/src/__tests__/createIntensityStore.test.ts

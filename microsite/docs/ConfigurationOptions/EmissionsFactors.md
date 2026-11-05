@@ -25,11 +25,11 @@ How the current integration behaves (this is being replaced; see `docs/design/20
 - Values are memoised in memory per zone and period start for the lifetime of the process; nothing is persisted between runs.
 - The cloud-region to Electricity Maps zone mapping is maintained in each provider package.
 - Recommendations and lookup tables, which have no usage period of their own, use the intensity at midnight UTC at the start of the previous day.
-- If a request to Electricity Maps fails (a network error, a response that is not JSON, an invalid or expired token answered with HTTP 401, or a server error, HTTP 5xx), the estimate stops with an error and nothing is written to the estimates cache, so the next run asks again. This holds for AWS, Google Cloud and Azure billing data alike; Azure used to leave out the subscription instead. Recommendations handle a failed request as before:
+- If a request to Electricity Maps fails (a network error, a response that is not JSON, an HTTP 401 saying the token is invalid, or a server error, HTTP 5xx), the estimate stops with an error and nothing is written to the estimates cache, so the next run asks again. This holds for AWS, Google Cloud and Azure billing data alike; Azure used to leave out the subscription instead. Recommendations handle a failed request as before:
   - AWS recommendations fail the request.
   - Google Cloud reports zero savings, with a warning, for each recommendation it costs individually. An idle IP address recommendation in a project with other costed recommendations fails the whole recommendations request.
   - Azure Advisor leaves out the subscription's recommendations, with a warning.
-- If Electricity Maps answers without a value in any other way (for example an error response for a zone the token cannot access), CCF logs a warning and uses the default emissions factor for that row. Each row makes its own request and logs its own warning, and those rows are cached like any other.
+- If Electricity Maps answers without a value in any other way (for example the HTTP 401 Electricity Maps sends when a valid token has no access to a zone or endpoint), CCF logs a warning and uses the default emissions factor for that row. Each row makes its own request and logs its own warning, and those rows are cached like any other.
 
 Here's how to configure CCF to use the Electricity Maps API:
 
