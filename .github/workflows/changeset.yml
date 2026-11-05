@@ -14,6 +14,14 @@ jobs:
   create-release-pr:
     name: Create Changeset PR
     runs-on: ubuntu-latest
+    # The repository's default token is read-only. changesets/action pushes
+    # the changeset-release/trunk branch and opens the Version Packages pull
+    # request, which needs these two. Opening the pull request also needs
+    # "Allow GitHub Actions to create and approve pull requests" in
+    # Settings > Actions > General.
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
