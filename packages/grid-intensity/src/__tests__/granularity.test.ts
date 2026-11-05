@@ -5,6 +5,7 @@
 
 import {
   addPeriod,
+  coarsestWithin,
   isAtLeastAsFine,
   periodsCovering,
   startOfPeriod,
@@ -12,6 +13,23 @@ import {
 } from '../granularity'
 
 const utc = (iso: string) => new Date(iso)
+
+describe('coarsestWithin', () => {
+  it.each([
+    ['half an hour', '2026-03-10T13:00:00Z', '2026-03-10T13:30:00Z', 'hour'],
+    ['an hour', '2026-03-10T13:00:00Z', '2026-03-10T14:00:00Z', 'hour'],
+    ['two hours', '2026-03-10T13:00:00Z', '2026-03-10T15:00:00Z', 'hour'],
+    ['a day', '2026-03-10T00:00:00Z', '2026-03-11T00:00:00Z', 'day'],
+    ['a week', '2026-04-06T00:00:00Z', '2026-04-13T00:00:00Z', 'day'],
+    ['February', '2026-02-01T00:00:00Z', '2026-03-01T00:00:00Z', 'month'],
+    ['March', '2026-03-01T00:00:00Z', '2026-04-01T00:00:00Z', 'month'],
+    ['a quarter', '2026-04-01T00:00:00Z', '2026-07-01T00:00:00Z', 'month'],
+    ['a year', '2026-01-01T00:00:00Z', '2027-01-01T00:00:00Z', 'year'],
+    ['a leap year', '2028-01-01T00:00:00Z', '2029-01-01T00:00:00Z', 'year'],
+  ] as const)('%s (%s to %s) is %s', (_label, start, end, expected) => {
+    expect(coarsestWithin(utc(start), utc(end))).toBe(expected)
+  })
+})
 
 describe('isAtLeastAsFine', () => {
   it.each([

@@ -47,7 +47,10 @@ export interface LicenceDeclaration {
 
 export interface IntensityPoint {
   zoneId: string
-  /** UTC, inclusive. */
+  /**
+   * UTC, inclusive. A point covers one whole UTC hour, day, month or year of
+   * its granularity; the resolver drops points that do not.
+   */
   periodStart: Date
   /** UTC, exclusive. */
   periodEnd: Date
@@ -63,9 +66,21 @@ export interface IntensityPoint {
 export interface ZoneCapability {
   zoneId: string
   granularities: Granularity[]
-  /** Start of the lookback window the caller may fetch. Unbounded when absent. */
+  /**
+   * Start of the lookback window the caller may fetch. Unbounded when absent.
+   * It limits fetches only: stored points from before it are still used.
+   * The resolver fetches whole periods of the requested granularity and asks
+   * only for periods that lie wholly in [earliest, latest], so a source
+   * should report both on its own period boundaries (a monthly source: the
+   * start of its first and the end of its last complete month).
+   */
   earliest?: Date
-  /** End of the available data. Unbounded when absent. */
+  /**
+   * End of the available data. Unbounded when absent. A day or hour of usage
+   * that runs past it is served from the source's finest data up to it,
+   * marked estimated; a longer period keeps its usual granularity and loses
+   * the incomplete last period.
+   */
   latest?: Date
   forecastHours?: number
   bases: IntensityBasis[]
