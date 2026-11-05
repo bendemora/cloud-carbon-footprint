@@ -4698,6 +4698,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@cloud-carbon-footprint/grid-intensity@workspace:packages/grid-intensity"
   dependencies:
+    "@cloud-carbon-footprint/common": "npm:^2.0.0"
     "@types/jest": "npm:^29.5.12"
     "@types/node": "npm:^24.0.0"
     "@typescript-eslint/eslint-plugin": "npm:^8.56.1"

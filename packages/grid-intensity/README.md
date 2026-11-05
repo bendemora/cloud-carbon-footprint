@@ -6,15 +6,24 @@ Design: `docs/design/2026-11-localised-time-resolved-carbon-estimation.md`, sect
 
 ## Status
 
-Phase 1, first pull request. This package currently contains:
+Phase 1. This package contains:
 
 - The interfaces from section 6.1 of the design (`GridIntensitySource`, `IntensityStore`, `IntensityResolver`, `IntensityPoint`, `Provenance`, licence and capability types).
-- `StaticSource`: the CCF static annual factors as a source. Always available, quality tier D. The factor tables stay in the provider packages and are given to the constructor, so this package depends on no other workspace package.
-- `deriveQualityTier`: the tier rules from section 6.4.
-- `requiresAcknowledgement`: which licences need an operator acknowledgement before a source is used (section 6.3).
-- UTC period helpers and tCO2e/gCO2e conversions.
+- `StaticSource`: the CCF static annual factors as a source. Always available, quality tier D. The factor tables stay in the provider packages and are given to the constructor, so this package depends on no provider package.
+- `GridIntensityResolver`: the resolution policy from section 6.2. Sources are tried in configured order; those that cannot deliver data at least as fine as the usage period are tried only after the others, finest first. Commercial, non-commercial and custom licences need an operator acknowledgement. Stored points are read first and only missing periods are fetched. Failures are logged once per source and zone, negative-cached for the capability TTL, and never abort a run.
+- `InMemoryIntensityStore`. The LOCAL and MONGODB stores (section 6.6) come next.
+- `resolveEmissionsFactors`: the adapter the provider packages will call in place of `getEmissionsFactors`. It builds a default resolver from `GRID_INTENSITY_SOURCES`, `GRID_INTENSITY_LICENCE_ACKNOWLEDGEMENTS` and `GRID_INTENSITY_CAPABILITY_TTL_HOURS`. When the static source is used, it returns the caller's table unchanged, so estimates stay identical to today's.
+- `deriveQualityTier` (section 6.4), `requiresAcknowledgement` (section 6.3), UTC period helpers, time-weighting and tCO2e/gCO2e conversions.
 
-Not yet here: the Electricity Maps v4 source, the stores, the resolver, the `resolveEmissionsFactors` adapter and its wiring into the provider packages, the doctor command and the capabilities endpoint. Nothing in the estimation path uses this package yet.
+Not yet here: the Electricity Maps v4 source, the LOCAL and MONGODB stores, provenance on `ServiceData` and the wiring into the provider packages, the doctor command and the capabilities endpoint. Nothing in the estimation path uses this package yet.
+
+## Configuration
+
+| Key                                       | Default  | Meaning                                                                                                                             |
+| ----------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `GRID_INTENSITY_SOURCES`                  | `static` | Comma-separated source ids in priority order. Only `static` exists so far; unknown ids are ignored with a warning.                  |
+| `GRID_INTENSITY_LICENCE_ACKNOWLEDGEMENTS` | empty    | Source ids the operator asserts they are licensed to use. Required for sources with a commercial, non-commercial or custom licence. |
+| `GRID_INTENSITY_CAPABILITY_TTL_HOURS`     | `24`     | How long capability answers and failures are cached.                                                                                |
 
 ## Units
 
