@@ -126,12 +126,14 @@ describe('Config', () => {
   })
 
   describe('GRID_INTENSITY', () => {
-    it('defaults to the static source, no acknowledgements and a 24 hour TTL', () => {
+    it('defaults to the static source, no acknowledgements, a 24 hour TTL and the LOCAL store', () => {
       const config = getConfig()
       expect(config.GRID_INTENSITY).toEqual({
         SOURCES: ['static'],
         LICENCE_ACKNOWLEDGEMENTS: [],
         CAPABILITY_TTL_HOURS: 24,
+        STORE: 'LOCAL',
+        STORE_PATH: '.ccf/grid-intensity',
       })
     })
 
@@ -156,6 +158,16 @@ describe('Config', () => {
           )
         },
       )
+    })
+
+    it('reads the store mode, in any case, and the store path', () => {
+      withEnvironment('GRID_INTENSITY_STORE', 'mongodb', () => {
+        withEnvironment('GRID_INTENSITY_STORE_PATH', '/var/lib/ccf', () => {
+          const config = getConfig()
+          expect(config.GRID_INTENSITY.STORE).toBe('MONGODB')
+          expect(config.GRID_INTENSITY.STORE_PATH).toBe('/var/lib/ccf')
+        })
+      })
     })
 
     it.each([

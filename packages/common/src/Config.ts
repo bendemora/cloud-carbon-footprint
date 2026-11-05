@@ -98,6 +98,10 @@ export interface CCFConfig {
     LICENCE_ACKNOWLEDGEMENTS?: string[]
     /** How long capability answers and failures are cached. */
     CAPABILITY_TTL_HOURS?: number
+    /** Where fetched intensity points are kept: LOCAL or MONGODB. */
+    STORE?: string
+    /** Directory of the LOCAL store. */
+    STORE_PATH?: string
   }
 }
 
@@ -341,6 +345,8 @@ const getConfig = (): CCFConfig => ({
       getEnvVar('GRID_INTENSITY_CAPABILITY_TTL_HOURS'),
       24,
     ),
+    STORE: (getEnvVar('GRID_INTENSITY_STORE') || 'LOCAL').toUpperCase(),
+    STORE_PATH: getEnvVar('GRID_INTENSITY_STORE_PATH') || '.ccf/grid-intensity',
   },
 })
 

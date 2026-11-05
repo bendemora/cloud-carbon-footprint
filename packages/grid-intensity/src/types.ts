@@ -84,6 +84,12 @@ export interface GridIntensitySource {
   readonly id: string
   /** Default licence for the source. Individual zones may narrow it. */
   readonly licence: LicenceDeclaration
+  /**
+   * False for sources whose values come from code (the static tables): the
+   * resolver neither reads nor writes the store for them, so stored copies
+   * cannot go stale when the tables change. Default true.
+   */
+  readonly persist?: boolean
   probe(): Promise<SourceStatus>
   capabilities(zoneId: string): Promise<ZoneCapability | null>
   /** The source's zone for a cloud region, or null when it has none. */
