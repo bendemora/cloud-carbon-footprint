@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { randomUUID } from 'crypto'
 import { Dirent } from 'fs'
 import {
   mkdir,
@@ -114,16 +115,21 @@ const mismatch = (
 /*
  * Read-merge-write cycles on one file run one at a time within the process,
  * across every store on the same directory: GCP Recommendations resolves
- * rows concurrently, and the API serves overlapping requests.
+ * rows concurrently, and the API serves overlapping requests. The queue
+ * ignores case, because on a case-insensitive file system paths that
+ * differ only in case are one file; on a case-sensitive one this only
+ * serialises two files that did not need it.
  */
 const fileQueues = new Map<string, Promise<void>>()
-let writeSequence = 0
+
+/** A temporary file younger than this may still be in another writer's hands. */
+const TEMPORARY_FILE_MIN_AGE_MS = 60 * 60 * 1000
 
 const exclusively = async <T>(
   path: string,
   task: () => Promise<T>,
 ): Promise<T> => {
-  const queued = resolve(path)
+  const queued = resolve(path).normalize('NFC').toLowerCase()
   const result = (fileQueues.get(queued) ?? Promise.resolve()).then(task)
   const settled = result.then(
     () => undefined,
@@ -227,7 +233,8 @@ export class LocalIntensityStore implements IntensityStore {
 
   /**
    * Removes the source's points retrieved before `olderThan`, and temporary
-   * files last changed before it (left by a process that stopped mid-write).
+   * files last changed before it and over an hour ago (left by a process
+   * that stopped mid-write).
    * Files and directories the store did not write are skipped. A file that
    * cannot be read does not stop the purge of the others; the purge then
    * fails naming it.
@@ -284,19 +291,26 @@ export class LocalIntensityStore implements IntensityStore {
 
   /**
    * Under the lock of the file it was for, so no write in this process is
-   * cut off. A file another process has renamed meanwhile is skipped.
+   * cut off, and only when last changed over an hour ago, so neither is
+   * another process's. A file another process has renamed meanwhile is
+   * skipped.
    */
   private removeIfOlder(
     temporary: string,
     target: string,
     olderThan: Date,
   ): Promise<void> {
+    const cutOff = Math.min(
+      olderThan.getTime(),
+      Date.now() - TEMPORARY_FILE_MIN_AGE_MS,
+    )
     return exclusively(target, async () => {
       const changed = await stat(temporary).then(
-        (stats) => stats.mtime,
+        (stats) => stats.mtime.getTime(),
         () => null,
       )
-      if (changed && changed < olderThan) await rm(temporary, { force: true })
+      if (changed !== null && changed < cutOff)
+        await rm(temporary, { force: true })
     })
   }
 
@@ -335,17 +349,20 @@ export class LocalIntensityStore implements IntensityStore {
   }
 
   /**
-   * Writes to a temporary file named for this process and write, then
-   * renames it into place, so a crash leaves no half-written store file.
+   * Writes to a temporary file with a random name, then renames it into
+   * place, so a crash leaves no half-written store file. The name is random
+   * because process ids repeat across containers sharing a volume.
    */
   private async write(path: string, file: StoreFile): Promise<void> {
     await mkdir(dirname(path), { recursive: true })
-    const temporary = `${path}.${process.pid}-${++writeSequence}.tmp`
+    const temporary = `${path}.${process.pid}-${randomUUID()}.tmp`
     try {
       await writeFile(temporary, JSON.stringify(file), { flag: 'wx' })
       await rename(temporary, path)
     } catch (error) {
-      await rm(temporary, { force: true })
+      // EEXIST: the file is another writer's, not ours to remove.
+      if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST')
+        await rm(temporary, { force: true })
       throw error
     }
   }
