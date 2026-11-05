@@ -39,6 +39,40 @@ components:
                     type: object
                     additionalProperties:
                       type: string
+              provenance?:
+                type: object
+                description: Where the grid intensity behind co2e came from. Absent on rows estimated before it was recorded, and for Alibaba Cloud and on-premise rows.
+                properties:
+                  sourceId:
+                    type: string
+                    description: For example static or electricitymaps-v3
+                  zoneId:
+                    type: string
+                    description: The grid zone, not the cloud availability zone
+                  granularity:
+                    type: string
+                    enum: [hour, day, month, year]
+                  basis:
+                    type: string
+                    enum: [location-consumption, location-production, marginal]
+                  factorType:
+                    type: string
+                    enum: [lifecycle, direct]
+                  isEstimated:
+                    type: boolean
+                  licenceId:
+                    type: string
+                    enum: [public-domain, CC-BY-4.0, open-attribution, non-commercial, commercial, custom]
+                  qualityTier:
+                    type: string
+                    enum: [A, B, C, D]
+                  gCO2ePerKWh:
+                    type: number
+                    description: Grid intensity applied to the row's operational energy
+                  modelVersion:
+                    type: string
+                  calibrationVersion?:
+                    type: string
         periodStartDate:
           type: string
         periodEndDate:

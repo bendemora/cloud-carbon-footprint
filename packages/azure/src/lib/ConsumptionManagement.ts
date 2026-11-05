@@ -20,7 +20,9 @@ import {
   wait,
 } from '@cloud-carbon-footprint/common'
 import {
+  EmissionsFactorsResolution,
   lastFullUtcDay,
+  Period,
   resolveEmissionsFactors,
   usagePeriod,
 } from '@cloud-carbon-footprint/grid-intensity'
@@ -129,19 +131,11 @@ export default class ConsumptionManagementService {
 
       this.updateTimestampByGrouping(grouping, consumptionDetailRow)
 
-      const period = usagePeriod(consumptionDetailRow.timestamp, grouping)
-      const { factors: emissionsFactors } = await resolveEmissionsFactors(
-        'AZURE',
-        consumptionDetailRow.region,
-        period.start,
-        period.end,
-        { factors: AZURE_EMISSIONS_FACTORS_METRIC_TON_PER_KWH },
-        {
-          legacyElectricityMapsZones:
-            AZURE_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-          logger: this.consumptionManagementLogger,
-        },
-      )
+      const { factors: emissionsFactors, provenance } =
+        await this.resolveFactors(
+          consumptionDetailRow.region,
+          usagePeriod(consumptionDetailRow.timestamp, grouping),
+        )
 
       const footprintEstimate = this.getFootprintEstimateFromUsageRow(
         consumptionDetailRow,
@@ -153,7 +147,7 @@ export default class ConsumptionManagementService {
         appendOrAccumulateEstimatesByDay(
           results,
           consumptionDetailRow,
-          footprintEstimate,
+          { ...footprintEstimate, provenance },
           grouping,
           [],
         )
@@ -161,17 +155,24 @@ export default class ConsumptionManagementService {
     }
 
     if (results.length > 0) {
-      unknownRows.map((rowData: ConsumptionDetailRow) => {
-        const footprintEstimate = this.getEstimateForUnknownUsage(rowData)
+      for (const rowData of unknownRows) {
+        const { factors, provenance } = await this.resolveFactors(
+          rowData.region,
+          usagePeriod(rowData.timestamp, grouping),
+        )
+        const footprintEstimate = this.getEstimateForUnknownUsage(
+          rowData,
+          factors,
+        )
         if (footprintEstimate)
           appendOrAccumulateEstimatesByDay(
             results,
             rowData,
-            footprintEstimate,
+            { ...footprintEstimate, provenance },
             grouping,
             [],
           )
-      })
+      }
     }
 
     return results
@@ -203,18 +204,9 @@ export default class ConsumptionManagementService {
       }
       const consumptionDetailRow = new ConsumptionDetailRow(usageRow)
 
-      const period = lastFullUtcDay()
-      const { factors: emissionsFactors } = await resolveEmissionsFactors(
-        'AZURE',
+      const { factors: emissionsFactors } = await this.resolveFactors(
         consumptionDetailRow.region,
-        period.start,
-        period.end,
-        { factors: AZURE_EMISSIONS_FACTORS_METRIC_TON_PER_KWH },
-        {
-          legacyElectricityMapsZones:
-            AZURE_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-          logger: this.consumptionManagementLogger,
-        },
+        lastFullUtcDay(),
       )
 
       const footprintEstimate = this.getFootprintEstimateFromUsageRow(
@@ -235,8 +227,15 @@ export default class ConsumptionManagementService {
     }
 
     if (result.length > 0) {
-      unknownRows.map((inputDataRow: ConsumptionDetailRow) => {
-        const footprintEstimate = this.getEstimateForUnknownUsage(inputDataRow)
+      for (const inputDataRow of unknownRows) {
+        const { factors } = await this.resolveFactors(
+          inputDataRow.region,
+          lastFullUtcDay(),
+        )
+        const footprintEstimate = this.getEstimateForUnknownUsage(
+          inputDataRow,
+          factors,
+        )
         if (footprintEstimate) {
           result.push({
             serviceName: inputDataRow.serviceName,
@@ -246,10 +245,29 @@ export default class ConsumptionManagementService {
             co2e: footprintEstimate.co2e,
           })
         }
-      })
+      }
     }
 
     return result
+  }
+
+  /** Grid intensity for a region over a period, with provenance. */
+  private resolveFactors(
+    region: string,
+    period: Period,
+  ): Promise<EmissionsFactorsResolution> {
+    return resolveEmissionsFactors(
+      'AZURE',
+      region,
+      period.start,
+      period.end,
+      { factors: AZURE_EMISSIONS_FACTORS_METRIC_TON_PER_KWH },
+      {
+        legacyElectricityMapsZones:
+          AZURE_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
+        logger: this.consumptionManagementLogger,
+      },
+    )
   }
 
   private getFootprintEstimateFromUsageRow(
@@ -990,6 +1008,7 @@ export default class ConsumptionManagementService {
 
   private getEstimateForUnknownUsage(
     rowData: ConsumptionDetailRow,
+    emissionsFactors: CloudConstantsEmissionsFactors,
   ): FootprintEstimate {
     const unknownUsage: UnknownUsage = {
       timestamp: rowData.timestamp,
@@ -1004,7 +1023,7 @@ export default class ConsumptionManagementService {
     return this.unknownEstimator.estimate(
       [unknownUsage],
       rowData.region,
-      AZURE_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
+      emissionsFactors,
       unknownConstants,
     )[0]
   }

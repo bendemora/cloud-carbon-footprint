@@ -51,6 +51,7 @@ import {
   AWS_CLOUD_CONSTANTS,
   AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
 } from '../domain'
+import { tonnesToGrams } from '@cloud-carbon-footprint/grid-intensity'
 import { AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES } from '../lib/AWSRegions'
 import {} from '../lib/CostAndUsageTypes'
 import { CloudWatchClient } from '@aws-sdk/client-cloudwatch'
@@ -87,16 +88,36 @@ const defaultMockConfig = {
 
 // Records the grid intensity calls and delegates to the real adapter.
 const mockResolveCalls: unknown[][] = []
+// When set, returned instead of the real resolution (a live source stand-in).
+let mockResolveOverride: unknown
 jest.mock('@cloud-carbon-footprint/grid-intensity', () => {
   const actual = jest.requireActual('@cloud-carbon-footprint/grid-intensity')
   return {
     ...actual,
     resolveEmissionsFactors: (...args: unknown[]) => {
       mockResolveCalls.push(args)
-      return actual.resolveEmissionsFactors(...args)
+      return mockResolveOverride
+        ? Promise.resolve(mockResolveOverride)
+        : actual.resolveEmissionsFactors(...args)
     },
   }
 })
+
+/**
+ * The results without provenance, for comparing with expectations written
+ * before provenance existed. Fails if any service estimate lacks it, so
+ * stripping cannot hide a missing field.
+ */
+const withoutProvenance = (results: EstimationResult[]) =>
+  results.map((result) => ({
+    ...result,
+    serviceEstimates: result.serviceEstimates.map(
+      ({ provenance, ...estimate }) => {
+        expect(provenance?.qualityTier).toEqual(expect.any(String))
+        return estimate
+      },
+    ),
+  }))
 
 jest.mock('@cloud-carbon-footprint/common', () => ({
   ...(jest.requireActual('@cloud-carbon-footprint/common') as Record<
@@ -338,7 +359,7 @@ describe('CostAndUsageReports Service', () => {
       },
     ]
 
-    expect(result).toEqual(expectedResult)
+    expect(withoutProvenance(result)).toEqual(expectedResult)
   })
 
   it("resolves grid intensity over each usage row's period with the AWS table", async () => {
@@ -388,6 +409,82 @@ describe('CostAndUsageReports Service', () => {
         AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
       )
     }
+  })
+
+  describe('provenance', () => {
+    const getEstimates = () =>
+      new CostAndUsageReports(
+        new ComputeEstimator(),
+        new StorageEstimator(AWS_CLOUD_CONSTANTS.SSDCOEFFICIENT),
+        new StorageEstimator(AWS_CLOUD_CONSTANTS.HDDCOEFFICIENT),
+        new NetworkingEstimator(AWS_CLOUD_CONSTANTS.NETWORKING_COEFFICIENT),
+        new MemoryEstimator(AWS_CLOUD_CONSTANTS.MEMORY_COEFFICIENT),
+        new UnknownEstimator(AWS_CLOUD_CONSTANTS.ESTIMATE_UNKNOWN_USAGE_BY),
+        new EmbodiedEmissionsEstimator(
+          AWS_CLOUD_CONSTANTS.SERVER_EXPECTED_LIFESPAN,
+        ),
+        getServiceWrapper(),
+      ).getEstimates(startDate, endDate, grouping)
+
+    beforeEach(() => {
+      mockStartQueryExecution(startQueryExecutionResponse)
+      mockGetQueryExecution(getQueryExecutionResponse)
+      mockGetQueryResults(athenaMockGetQueryResultsWithReclassifiedUnknowns)
+    })
+
+    afterEach(() => {
+      mockResolveOverride = undefined
+    })
+
+    it('records the static factor applied to every row, including rows built from unknown usage', async () => {
+      const results = await getEstimates()
+      const estimates = results.flatMap((r) => r.serviceEstimates)
+      expect(estimates.length).toBeGreaterThan(0)
+      for (const estimate of estimates)
+        expect(estimate.provenance).toEqual({
+          sourceId: 'static',
+          zoneId: `aws:${estimate.region}`,
+          granularity: 'year',
+          basis: 'location-production',
+          factorType: 'direct',
+          isEstimated: false,
+          licenceId: 'open-attribution',
+          qualityTier: 'D',
+          gCO2ePerKWh: tonnesToGrams(
+            AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH[estimate.region],
+          ),
+          modelVersion: 'unversioned',
+        })
+    })
+
+    it('applies the resolved intensity and its provenance to unknown-usage rows as well', async () => {
+      const liveTonnesPerKWh = 0.0001
+      const liveProvenance = {
+        sourceId: 'electricitymaps-v3',
+        zoneId: 'US-TEST',
+        granularity: 'hour',
+        basis: 'location-consumption',
+        factorType: 'lifecycle',
+        isEstimated: true,
+        licenceId: 'custom',
+        qualityTier: 'C',
+        gCO2ePerKWh: 100,
+        modelVersion: 'unversioned',
+      }
+      mockResolveOverride = {
+        factors: { Unknown: liveTonnesPerKWh },
+        provenance: liveProvenance,
+      }
+      const results = await getEstimates()
+      for (const estimate of results.flatMap((r) => r.serviceEstimates)) {
+        expect(estimate.provenance).toEqual(liveProvenance)
+        // no embodied emissions in this fixture: co2e is kWh times intensity
+        expect(estimate.co2e).toBeCloseTo(
+          estimate.kilowattHours * liveTonnesPerKWh,
+          15,
+        )
+      }
+    })
   })
 
   it('Gets Estimates for CloudWatch, RDS and S3 all on the same day with accumulation', async () => {
@@ -500,7 +597,7 @@ describe('CostAndUsageReports Service', () => {
         periodStartDate: new Date('2020-10-30T00:00:00.000Z'),
       },
     ]
-    expect(result).toEqual(expectedResult)
+    expect(withoutProvenance(result)).toEqual(expectedResult)
   })
 
   it('Gets Estimates for Amazon Glue, ECS and DynamoDB Storage and excluded usage types', async () => {
@@ -591,7 +688,7 @@ describe('CostAndUsageReports Service', () => {
         periodStartDate: new Date('2020-10-31T00:00:00.000Z'),
       },
     ]
-    expect(result).toEqual(expectedResult)
+    expect(withoutProvenance(result)).toEqual(expectedResult)
   })
 
   it('Gets Estimates for Kinesis, ES & EC2 Spot Instance', async () => {
@@ -697,7 +794,7 @@ describe('CostAndUsageReports Service', () => {
         periodStartDate: new Date('2020-10-31T00:00:00.000Z'),
       },
     ]
-    expect(result).toEqual(expectedResult)
+    expect(withoutProvenance(result)).toEqual(expectedResult)
   })
 
   it('Gets Estimates for ECS Compute + Storage, EKS Compute, Kafka and Unknown Services', async () => {
@@ -842,7 +939,7 @@ describe('CostAndUsageReports Service', () => {
         periodStartDate: new Date('2020-10-30T00:00:00.000Z'),
       },
     ]
-    expect(result).toEqual(expectedResult)
+    expect(withoutProvenance(result)).toEqual(expectedResult)
   })
 
   it('Gets Estimates for DocumentDB Compute, ElasticMapReduce, EC2 Credits', async () => {
@@ -972,7 +1069,7 @@ describe('CostAndUsageReports Service', () => {
         periodStartDate: new Date('2020-10-30T00:00:00.000Z'),
       },
     ]
-    expect(result).toEqual(expectedResult)
+    expect(withoutProvenance(result)).toEqual(expectedResult)
   })
 
   it('Gets Estimates for Redshift Storage and Compute, and Savings Plan Compute', async () => {
@@ -1072,7 +1169,7 @@ describe('CostAndUsageReports Service', () => {
         periodStartDate: new Date('2020-10-30T00:00:00.000Z'),
       },
     ]
-    expect(result).toEqual(expectedResult)
+    expect(withoutProvenance(result)).toEqual(expectedResult)
   })
 
   it('Gets Estimates for EC2 and ElasticMapReduce with Embodied Emissions', async () => {
@@ -1197,7 +1294,7 @@ describe('CostAndUsageReports Service', () => {
       },
     ]
 
-    expect(result).toEqual(expectedResult)
+    expect(withoutProvenance(result)).toEqual(expectedResult)
   })
 
   it('Gets Estimates for Networking', async () => {
@@ -1265,7 +1362,7 @@ describe('CostAndUsageReports Service', () => {
         periodStartDate: new Date('2021-01-01T00:00:00.000Z'),
       },
     ]
-    expect(result).toEqual(expectedResult)
+    expect(withoutProvenance(result)).toEqual(expectedResult)
   })
 
   it('estimation for Memory', async () => {
@@ -1332,7 +1429,7 @@ describe('CostAndUsageReports Service', () => {
         periodStartDate: new Date('2021-01-01T00:00:00.000Z'),
       },
     ]
-    expect(result).toEqual(expectedResult)
+    expect(withoutProvenance(result)).toEqual(expectedResult)
   })
 
   it('estimation for S3 with replication factors', async () => {
@@ -1499,7 +1596,7 @@ describe('CostAndUsageReports Service', () => {
         periodStartDate: new Date('2021-01-07T00:00:00.000Z'),
       },
     ]
-    expect(result).toEqual(expectedResult)
+    expect(withoutProvenance(result)).toEqual(expectedResult)
   })
 
   it('estimation for EC2, RDS and EFS with replication factors', async () => {
@@ -1643,7 +1740,7 @@ describe('CostAndUsageReports Service', () => {
         periodStartDate: new Date('2021-01-01T00:00:00.000Z'),
       },
     ]
-    expect(result).toEqual(expectedResult)
+    expect(withoutProvenance(result)).toEqual(expectedResult)
   })
 
   it('estimation for DocumentDB and DynamoDB with replication factors', async () => {
@@ -1772,7 +1869,7 @@ describe('CostAndUsageReports Service', () => {
         periodStartDate: new Date('2021-01-01T00:00:00.000Z'),
       },
     ]
-    expect(result).toEqual(expectedResult)
+    expect(withoutProvenance(result)).toEqual(expectedResult)
   })
 
   it('estimation for reclassified unknowns', async () => {
@@ -1915,7 +2012,7 @@ describe('CostAndUsageReports Service', () => {
         periodStartDate: new Date('2021-01-03T00:00:00.000Z'),
       },
     ]
-    expect(result).toEqual(expectedResult)
+    expect(withoutProvenance(result)).toEqual(expectedResult)
   })
 
   it('estimation for H1 instances, Api Gateway, Fsx, Kinesis, Backup, DirectConnect and DirectoryService', async () => {
@@ -2059,7 +2156,7 @@ describe('CostAndUsageReports Service', () => {
         periodStartDate: new Date('2021-01-01T00:00:00.000Z'),
       },
     ]
-    expect(result).toEqual(expectedResult)
+    expect(withoutProvenance(result)).toEqual(expectedResult)
   })
 
   it('returns estimates for instance types with additional prefix', async () => {
@@ -2113,7 +2210,7 @@ describe('CostAndUsageReports Service', () => {
       },
     ]
 
-    expect(result).toEqual(expectedResult)
+    expect(withoutProvenance(result)).toEqual(expectedResult)
   })
 
   it('returns estimates for GPU instances', async () => {
@@ -2181,7 +2278,7 @@ describe('CostAndUsageReports Service', () => {
       },
     ]
 
-    expect(result).toEqual(expectedResult)
+    expect(withoutProvenance(result)).toEqual(expectedResult)
   })
 
   it('returns estimates for both x86 and ARM Lambdas', async () => {
@@ -2257,7 +2354,7 @@ describe('CostAndUsageReports Service', () => {
       },
     ]
 
-    expect(result).toEqual(expectedResult)
+    expect(withoutProvenance(result)).toEqual(expectedResult)
   })
 
   it('returns estimates for instances with tags', async () => {
@@ -2355,7 +2452,7 @@ describe('CostAndUsageReports Service', () => {
       },
     ]
 
-    expect(result).toEqual(expectedResult)
+    expect(withoutProvenance(result)).toEqual(expectedResult)
   })
 
   it('queries estimates for filtered accounts when list of accounts is provided', async () => {
@@ -2571,7 +2668,7 @@ describe('CostAndUsageReports Service', () => {
       },
     ]
 
-    expect(result).toEqual(expectedResult)
+    expect(withoutProvenance(result)).toEqual(expectedResult)
   })
 
   describe('optional athena columns', () => {

@@ -15,11 +15,11 @@ Phase 1. This package contains:
 - `resolveEmissionsFactors`: the adapter the provider packages will call in place of `getEmissionsFactors`. It builds a default resolver and store from the configuration below. When the static source is used, it returns the caller's table unchanged, so estimates stay identical to today's. `shutdownDefaultResolver()` closes the store at the end of a run.
 - `deriveQualityTier` (section 6.4), `requiresAcknowledgement` (section 6.3), UTC period helpers, time-weighting and tCO2e/gCO2e conversions.
 
-The AWS, GCP and Azure packages call `resolveEmissionsFactors` in place of `getEmissionsFactors`. With the default configuration every row resolves to the static factors, so estimates are unchanged. Provenance is computed but not yet attached to `ServiceData`; that is the next pull request.
+The AWS, GCP and Azure packages call `resolveEmissionsFactors` in place of `getEmissionsFactors`, for known and unknown usage alike, and attach the provenance to each `ServiceData` row (`provenance`, including `gCO2ePerKWh`, the intensity applied). With the default configuration every row resolves to the static factors, so estimates are unchanged. ALI and on-premise rows carry no provenance yet.
 
 While `ELECTRICITY_MAPS_TOKEN` is set, the adapter keeps using the existing Electricity Maps v3 lookup in `packages/common` (one hourly sample at the start of each period), labelled `electricitymaps-v3`, until the v4 source replaces it.
 
-Not yet here: the Electricity Maps v4 source, provenance on `ServiceData`, the doctor command and the capabilities endpoint.
+Not yet here: the Electricity Maps v4 source, the doctor command and the capabilities endpoint.
 
 ## Configuration
 
