@@ -52,6 +52,7 @@ const GRANULARITY: Granularity = 'year'
  */
 export class StaticSource implements GridIntensitySource {
   readonly id = STATIC_SOURCE_ID
+  readonly persist = false
   readonly licence: LicenceDeclaration = {
     id: 'open-attribution',
     attribution:

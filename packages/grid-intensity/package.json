@@ -39,7 +39,8 @@
     "lint:fix": "eslint '*/**/*.ts' --quiet --fix"
   },
   "dependencies": {
-    "@cloud-carbon-footprint/common": "^2.0.0"
+    "@cloud-carbon-footprint/common": "^2.0.0",
+    "mongodb": "^4.7.0"
   },
   "devDependencies": {
     "@types/jest": "^29.5.12",

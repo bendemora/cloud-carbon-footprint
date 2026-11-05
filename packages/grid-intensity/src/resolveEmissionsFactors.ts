@@ -15,11 +15,13 @@ import {
   StaticSource,
 } from './sources/StaticSource'
 import { STATIC_SOURCE_ID } from './qualityTier'
+import { createIntensityStore } from './stores/createIntensityStore'
 import { gramsToTonnes } from './units'
 import {
   CloudProvider,
   GridIntensitySource,
   IntensityResolver,
+  IntensityStore,
   Provenance,
 } from './types'
 
@@ -36,14 +38,17 @@ export interface EmissionsFactorsResolution {
  */
 const staticTables: StaticFactorTables = {}
 let defaultResolver: GridIntensityResolver | undefined
+let defaultStore: (IntensityStore & { close?: () => Promise<void> }) | undefined
 
 const SOURCE_FACTORIES: Record<string, () => GridIntensitySource> = {
   [STATIC_SOURCE_ID]: () => new StaticSource(staticTables),
 }
 
 const createDefaultResolver = (): GridIntensityResolver => {
-  const config = configLoader().GRID_INTENSITY ?? {}
+  const ccfConfig = configLoader()
+  const config = ccfConfig.GRID_INTENSITY ?? {}
   const logger = new Logger('grid-intensity')
+  defaultStore = createIntensityStore(config, ccfConfig.MONGODB, logger)
   const sources: GridIntensitySource[] = []
   for (const id of config.SOURCES ?? [STATIC_SOURCE_ID]) {
     const create = SOURCE_FACTORIES[id]
@@ -55,6 +60,7 @@ const createDefaultResolver = (): GridIntensityResolver => {
   }
   return new GridIntensityResolver({
     sources,
+    store: defaultStore,
     licenceAcknowledgements: config.LICENCE_ACKNOWLEDGEMENTS,
     capabilityTtlHours: config.CAPABILITY_TTL_HOURS,
     logger,
@@ -68,6 +74,18 @@ const createDefaultResolver = (): GridIntensityResolver => {
  */
 export const resetDefaultResolver = (): void => {
   defaultResolver = undefined
+  defaultStore = undefined
+}
+
+/**
+ * Closes the default resolver's store (the MongoDB connection, when
+ * GRID_INTENSITY_STORE is MONGODB) and discards the resolver. Call at the end
+ * of a run, next to the estimates cache's own close.
+ */
+export const shutdownDefaultResolver = async (): Promise<void> => {
+  const store = defaultStore
+  resetDefaultResolver()
+  await store?.close?.()
 }
 
 const factorsOf = (table: StaticFactorTable): StaticFactors =>
