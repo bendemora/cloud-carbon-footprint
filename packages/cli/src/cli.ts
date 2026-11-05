@@ -13,6 +13,7 @@ import {
   MongoDbCacheManager,
 } from '@cloud-carbon-footprint/app'
 import { EstimationResult, configLoader } from '@cloud-carbon-footprint/common'
+import { shutdownDefaultResolver } from '@cloud-carbon-footprint/grid-intensity'
 
 import EmissionsByDayAndServiceTable from './EmissionsByDayAndServiceTable'
 import EmissionsByServiceTable from './EmissionsByServiceTable'
@@ -83,6 +84,8 @@ export default async function cli(argv: string[] = process.argv) {
       }
       return EmissionsByDayAndServiceTable(estimations)
     })
+
+  await shutdownDefaultResolver()
 
   if (configLoader().CACHE_MODE === 'MONGODB') {
     await MongoDbCacheManager.mongoClient.close()

@@ -24,11 +24,15 @@ import {
   Logger,
   wait,
   GroupBy,
-  getEmissionsFactors,
   AccountDetailsOrIdList,
   buildAccountFilter,
   AccountDetails,
 } from '@cloud-carbon-footprint/common'
+import {
+  lastFullUtcDay,
+  resolveEmissionsFactors,
+  usagePeriod,
+} from '@cloud-carbon-footprint/grid-intensity'
 
 import {
   AccumulateKilowattHoursBy,
@@ -137,14 +141,19 @@ export default class CostAndUsageReports {
           accounts,
         )
 
-      const emissionsFactors: CloudConstantsEmissionsFactors =
-        await getEmissionsFactors(
-          costAndUsageReportRow.region,
-          costAndUsageReportRow.timestamp.toISOString(),
-          AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
-          AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-          this.costAndUsageReportsLogger,
-        )
+      const period = usagePeriod(costAndUsageReportRow.timestamp, grouping)
+      const { factors: emissionsFactors } = await resolveEmissionsFactors(
+        'AWS',
+        costAndUsageReportRow.region,
+        period.start,
+        period.end,
+        { factors: AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH },
+        {
+          legacyElectricityMapsZones:
+            AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
+          logger: this.costAndUsageReportsLogger,
+        },
+      )
 
       const footprintEstimate = this.getFootprintEstimateFromUsageRow(
         costAndUsageReportRow,
@@ -199,16 +208,20 @@ export default class CostAndUsageReports {
         1,
         {},
       )
-      const dateTime = new Date().toISOString()
 
-      const emissionsFactors: CloudConstantsEmissionsFactors =
-        await getEmissionsFactors(
-          costAndUsageReportRow.region,
-          dateTime,
-          AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
-          AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-          this.costAndUsageReportsLogger,
-        )
+      const period = lastFullUtcDay()
+      const { factors: emissionsFactors } = await resolveEmissionsFactors(
+        'AWS',
+        costAndUsageReportRow.region,
+        period.start,
+        period.end,
+        { factors: AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH },
+        {
+          legacyElectricityMapsZones:
+            AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
+          logger: this.costAndUsageReportsLogger,
+        },
+      )
 
       const footprintEstimate = this.getFootprintEstimateFromUsageRow(
         costAndUsageReportRow,

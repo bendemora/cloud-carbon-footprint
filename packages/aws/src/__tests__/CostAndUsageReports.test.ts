@@ -47,7 +47,11 @@ import {
   athenaMockGetQueryResultsWithX86AndARMLambdas,
   athenaMockGetQueryResultsWithTaggedResources,
 } from './fixtures/athena.fixtures'
-import { AWS_CLOUD_CONSTANTS } from '../domain'
+import {
+  AWS_CLOUD_CONSTANTS,
+  AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
+} from '../domain'
+import { AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES } from '../lib/AWSRegions'
 import {} from '../lib/CostAndUsageTypes'
 import { CloudWatchClient } from '@aws-sdk/client-cloudwatch'
 import { GlueClient } from '@aws-sdk/client-glue'
@@ -80,6 +84,19 @@ const defaultMockConfig = {
     ],
   },
 }
+
+// Records the grid intensity calls and delegates to the real adapter.
+const mockResolveCalls: unknown[][] = []
+jest.mock('@cloud-carbon-footprint/grid-intensity', () => {
+  const actual = jest.requireActual('@cloud-carbon-footprint/grid-intensity')
+  return {
+    ...actual,
+    resolveEmissionsFactors: (...args: unknown[]) => {
+      mockResolveCalls.push(args)
+      return actual.resolveEmissionsFactors(...args)
+    },
+  }
+})
 
 jest.mock('@cloud-carbon-footprint/common', () => ({
   ...(jest.requireActual('@cloud-carbon-footprint/common') as Record<
@@ -322,6 +339,55 @@ describe('CostAndUsageReports Service', () => {
     ]
 
     expect(result).toEqual(expectedResult)
+  })
+
+  it("resolves grid intensity over each usage row's period with the AWS table", async () => {
+    mockStartQueryExecution(startQueryExecutionResponse)
+    mockGetQueryExecution(getQueryExecutionResponse)
+    mockGetQueryResults(athenaMockGetQueryResultsWithEC2EBSLambda)
+    mockResolveCalls.length = 0
+
+    await new CostAndUsageReports(
+      new ComputeEstimator(),
+      new StorageEstimator(AWS_CLOUD_CONSTANTS.SSDCOEFFICIENT),
+      new StorageEstimator(AWS_CLOUD_CONSTANTS.HDDCOEFFICIENT),
+      new NetworkingEstimator(AWS_CLOUD_CONSTANTS.NETWORKING_COEFFICIENT),
+      new MemoryEstimator(AWS_CLOUD_CONSTANTS.MEMORY_COEFFICIENT),
+      new UnknownEstimator(AWS_CLOUD_CONSTANTS.ESTIMATE_UNKNOWN_USAGE_BY),
+      new EmbodiedEmissionsEstimator(
+        AWS_CLOUD_CONSTANTS.SERVER_EXPECTED_LIFESPAN,
+      ),
+      getServiceWrapper(),
+    ).getEstimates(startDate, endDate, grouping)
+
+    expect(mockResolveCalls.length).toBeGreaterThan(0)
+    for (const [
+      provider,
+      region,
+      start,
+      end,
+      table,
+      options,
+    ] of mockResolveCalls as [
+      string,
+      string,
+      Date,
+      Date,
+      unknown,
+      { legacyElectricityMapsZones: unknown },
+    ][]) {
+      expect(provider).toBe('AWS')
+      expect(region).toEqual(expect.any(String))
+      // a day grouping: one whole UTC day, exclusive end
+      expect(start.toISOString()).toMatch(/T00:00:00\.000Z$/)
+      expect(end.getTime() - start.getTime()).toBe(24 * 60 * 60 * 1000)
+      expect(table).toEqual({
+        factors: AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
+      })
+      expect(options.legacyElectricityMapsZones).toBe(
+        AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
+      )
+    }
   })
 
   it('Gets Estimates for CloudWatch, RDS and S3 all on the same day with accumulation', async () => {

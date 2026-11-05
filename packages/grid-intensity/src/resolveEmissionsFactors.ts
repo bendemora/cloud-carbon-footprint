@@ -3,10 +3,22 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { configLoader, Logger } from '@cloud-carbon-footprint/common'
+import {
+  configLoader,
+  getEmissionsFactors,
+  Logger,
+} from '@cloud-carbon-footprint/common'
+import {
+  addPeriod,
+  addUtcMonths,
+  Period,
+  startOfPeriod,
+  usageGranularityOf,
+} from './granularity'
 import {
   GridIntensityResolver,
   NoIntensityAvailableError,
+  ResolverLogger,
 } from './GridIntensityResolver'
 import {
   StaticFactors,
@@ -14,7 +26,7 @@ import {
   StaticFactorTables,
   StaticSource,
 } from './sources/StaticSource'
-import { STATIC_SOURCE_ID } from './qualityTier'
+import { deriveQualityTier, STATIC_SOURCE_ID } from './qualityTier'
 import { createIntensityStore } from './stores/createIntensityStore'
 import { gramsToTonnes } from './units'
 import {
@@ -30,6 +42,22 @@ export interface EmissionsFactorsResolution {
   factors: StaticFactors
   provenance: Provenance
 }
+
+export interface ResolveEmissionsFactorsOptions {
+  /** A resolver to use instead of the default one built from configuration. */
+  resolver?: IntensityResolver
+  /**
+   * The provider's region to Electricity Maps zone map. While
+   * ELECTRICITY_MAPS_TOKEN is set, the existing v3 lookup in
+   * packages/common is used first, so deployments with a token keep today's
+   * behaviour until the v4 source replaces it.
+   */
+  legacyElectricityMapsZones?: { [region: string]: string | null }
+  /** For warnings from the legacy lookup. */
+  logger?: ResolverLogger
+}
+
+export const LEGACY_ELECTRICITY_MAPS_SOURCE_ID = 'electricitymaps-v3'
 
 /*
  * The static tables the default resolver's StaticSource reads. Each call
@@ -69,8 +97,8 @@ const createDefaultResolver = (): GridIntensityResolver => {
 
 /**
  * Discards the default resolver, so the next call rebuilds it from the
- * current configuration with fresh caches. Call at the start of an
- * estimation run.
+ * current configuration with fresh caches. The default resolver otherwise
+ * lives for the process: one CLI run, or the life of the API server.
  */
 export const resetDefaultResolver = (): void => {
   defaultResolver = undefined
@@ -92,6 +120,96 @@ const factorsOf = (table: StaticFactorTable): StaticFactors =>
   typeof table.factors === 'function' ? table.factors() : table.factors
 
 /**
+ * The usage period a row stands for: from its timestamp to the start of the
+ * next day, week, month, quarter or year (the CCF GroupBy values), exclusive.
+ * Unknown groupings are treated as a day.
+ */
+export const usagePeriod = (start: Date, grouping: string): Period => {
+  switch (grouping) {
+    case 'week':
+      return { start, end: new Date(start.getTime() + 7 * 24 * 3600 * 1000) }
+    case 'month':
+      return { start, end: addPeriod(start, 'month') }
+    case 'quarter':
+      return { start, end: addUtcMonths(start, 3) }
+    case 'year':
+      return { start, end: addPeriod(start, 'year') }
+    default:
+      return { start, end: addPeriod(start, 'day') }
+  }
+}
+
+/**
+ * Yesterday in UTC. For estimates with no usage period of their own
+ * (recommendations, lookup tables), which used the current hour before.
+ */
+export const lastFullUtcDay = (now: Date = new Date()): Period => {
+  const end = startOfPeriod(now, 'day')
+  return { start: new Date(end.getTime() - 24 * 3600 * 1000), end }
+}
+
+let legacyLogger: ResolverLogger | undefined
+const legacyWarned = new Set<string>()
+
+/**
+ * The v3 lookup as getEmissionsFactors does it today: one hourly sample at
+ * the start of the period. A sample applied to a longer period is labelled
+ * estimated. Null when it did not produce a value, so the resolver decides.
+ */
+const legacyElectricityMapsLookup = async (
+  provider: CloudProvider,
+  region: string,
+  periodStart: Date,
+  periodEnd: Date,
+  staticTable: StaticFactorTable,
+  zones: { [region: string]: string | null },
+  logger: ResolverLogger,
+): Promise<EmissionsFactorsResolution | null> => {
+  const staticFactors = factorsOf(staticTable)
+  let factors: StaticFactors
+  try {
+    factors = await getEmissionsFactors(
+      region,
+      periodStart.toISOString(),
+      staticFactors,
+      zones,
+      logger as Logger,
+    )
+  } catch (error) {
+    const id = `${provider}|${region}`
+    if (!legacyWarned.has(id)) {
+      legacyWarned.add(id)
+      logger.warn(
+        `${(error as Error).message} Using the configured grid intensity sources for ${provider} region ${region} instead.`,
+      )
+    }
+    return null
+  }
+  if (factors === staticFactors) return null
+  const usageGranularity = usageGranularityOf(periodStart, periodEnd)
+  const isEstimated = usageGranularity !== 'hour'
+  return {
+    factors,
+    provenance: {
+      sourceId: LEGACY_ELECTRICITY_MAPS_SOURCE_ID,
+      zoneId: zones[region],
+      granularity: 'hour',
+      basis: 'location-consumption',
+      factorType: 'lifecycle',
+      isEstimated,
+      licenceId: 'custom',
+      qualityTier: deriveQualityTier({
+        sourceId: LEGACY_ELECTRICITY_MAPS_SOURCE_ID,
+        isEstimated,
+        intensityGranularity: 'hour',
+        usageGranularity,
+      }),
+      modelVersion: 'unversioned',
+    },
+  }
+}
+
+/**
  * Replaces getEmissionsFactors in packages/common (design section 6.1).
  * Resolves the grid intensity for a provider region over a usage period and
  * returns it in the shape estimateCo2 expects, with provenance.
@@ -106,9 +224,26 @@ export const resolveEmissionsFactors = async (
   periodStart: Date,
   periodEnd: Date,
   staticTable: StaticFactorTable,
-  resolver?: IntensityResolver,
+  options: ResolveEmissionsFactorsOptions = {},
 ): Promise<EmissionsFactorsResolution> => {
   staticTables[provider] = staticTable
+  const { resolver, legacyElectricityMapsZones } = options
+  if (
+    !resolver &&
+    legacyElectricityMapsZones &&
+    configLoader().ELECTRICITY_MAPS_TOKEN
+  ) {
+    const legacy = await legacyElectricityMapsLookup(
+      provider,
+      region,
+      periodStart,
+      periodEnd,
+      staticTable,
+      legacyElectricityMapsZones,
+      options.logger ?? (legacyLogger ??= new Logger('grid-intensity')),
+    )
+    if (legacy) return legacy
+  }
   const activeResolver =
     resolver ?? (defaultResolver ??= createDefaultResolver())
   try {

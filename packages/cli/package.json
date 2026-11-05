@@ -76,6 +76,7 @@
     "@azure/arm-resources-subscriptions": "^2.0.2",
     "@cloud-carbon-footprint/app": "2.0.0",
     "@cloud-carbon-footprint/common": "^2.0.0",
+    "@cloud-carbon-footprint/grid-intensity": "^0.0.0",
     "@types/cli-table": "^0.3.0",
     "@types/prompts": "^2.0.12",
     "@types/ramda": "^0.29.0",

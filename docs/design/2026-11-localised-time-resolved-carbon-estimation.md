@@ -260,6 +260,9 @@ Implementation notes (Phase 1, recorded as the code landed):
 - `capabilities()` moved from `IntensityResolver` to a separate `CapabilityReporter` interface, implemented with the doctor command, because the list of provider regions to report on comes from the app layer.
 - When every source is coarser than the usage period, the fallback round tries the finest first (a live monthly value beats the static annual one), keeping the configured order for ties.
 - A fetched period with gaps is averaged over the covered part and marked `isEstimated` (tier C); points outside 0 to 1,500 gCO2e/kWh are dropped with a warning.
+- The sixth argument became an options object: `resolver` (tests), `legacyElectricityMapsZones` and `logger`. While `ELECTRICITY_MAPS_TOKEN` is set and no v4 source exists, the adapter first calls the existing v3 `getEmissionsFactors` with the provider's zone map, so deployments with a token keep today's values; the result is labelled `electricitymaps-v3`, granularity `hour`, `isEstimated` unless the usage period is that hour (tier C for daily rows), licence `custom`. The v4 source replaces this path. A failed v3 request now falls back to the resolver with one warning per region instead of aborting the run.
+- Usage rows resolve over `usagePeriod(timestamp, grouping)`: from the row's timestamp to the start of the next day, week, month, quarter or year, exclusive (CCF's `getPeriodEndDate` is inclusive, one second short). Recommendations and lookup tables, which have no usage period, resolve over the last full UTC day (`lastFullUtcDay()`); with a token they used the current hour before.
+- The default resolver lives for the process (one CLI run, or the API server's lifetime). The CLI and the API's shutdown handler call `shutdownDefaultResolver()`.
 
 ### 6.2 Resolution policy
 

@@ -4,17 +4,16 @@
 
 import moment from 'moment'
 import {
-  CloudConstantsEmissionsFactors,
   ComputeEstimator,
   ICloudRecommendationsService,
   MemoryEstimator,
   StorageEstimator,
 } from '@cloud-carbon-footprint/core'
+import { Logger, RecommendationResult } from '@cloud-carbon-footprint/common'
 import {
-  getEmissionsFactors,
-  Logger,
-  RecommendationResult,
-} from '@cloud-carbon-footprint/common'
+  lastFullUtcDay,
+  resolveEmissionsFactors,
+} from '@cloud-carbon-footprint/grid-intensity'
 import { ServiceWrapper } from '../ServiceWrapper'
 import {
   EBSCurrentComputeOptimizerRecommendation,
@@ -219,15 +218,19 @@ export default class ComputeOptimizerRecommendations implements ICloudRecommenda
     computeOptimizerRecommendation: EC2CurrentComputeOptimizerRecommendation,
     logger: Logger,
   ) {
-    const dateTime = new Date().toISOString()
-    const emissionsFactors: CloudConstantsEmissionsFactors =
-      await getEmissionsFactors(
-        computeOptimizerRecommendation.region,
-        dateTime,
-        AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
-        AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-        logger,
-      )
+    const period = lastFullUtcDay()
+    const { factors: emissionsFactors } = await resolveEmissionsFactors(
+      'AWS',
+      computeOptimizerRecommendation.region,
+      period.start,
+      period.end,
+      { factors: AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH },
+      {
+        legacyElectricityMapsZones:
+          AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
+        logger: logger,
+      },
+    )
     const computeFootprint = new AWSComputeEstimatesBuilder(
       computeOptimizerRecommendation,
       this.computeEstimator,

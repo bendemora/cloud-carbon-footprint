@@ -21,6 +21,7 @@ import {
 } from './fixtures/cloudmonitoring.fixtures'
 import cli from '../cli'
 import { MongoDbCacheManager } from '@cloud-carbon-footprint/app'
+import { shutdownDefaultResolver } from '@cloud-carbon-footprint/grid-intensity'
 
 let mockWarn: jest.SpyInstance
 const mockListTimeSeries = jest.fn()
@@ -42,6 +43,10 @@ jest.mock('@google-cloud/monitoring', () => {
 const mockGetCostAndEstimates = jest.fn()
 const mockGetFilterData = jest.fn()
 const mockGetEmissionsFactors = jest.fn()
+
+jest.mock('@cloud-carbon-footprint/grid-intensity', () => ({
+  shutdownDefaultResolver: jest.fn().mockResolvedValue(undefined),
+}))
 
 jest.mock('@cloud-carbon-footprint/app', () => ({
   ...(jest.requireActual('@cloud-carbon-footprint/app') as Record<
@@ -276,6 +281,14 @@ describe('cli', () => {
           'GroupBy parameter not specified, adopting "day" as the default.',
         )
       })
+    })
+  })
+
+  describe('grid intensity store', () => {
+    it('is closed once the estimates are in', async () => {
+      ;(shutdownDefaultResolver as jest.Mock).mockClear()
+      await cli([...rawRequest])
+      expect(shutdownDefaultResolver).toHaveBeenCalledTimes(1)
     })
   })
 

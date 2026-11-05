@@ -3,12 +3,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { configLoader } from '@cloud-carbon-footprint/common'
+import {
+  configLoader,
+  getEmissionsFactors,
+} from '@cloud-carbon-footprint/common'
 import { GridIntensityResolver } from '../GridIntensityResolver'
 import {
+  lastFullUtcDay,
   resetDefaultResolver,
   resolveEmissionsFactors,
   shutdownDefaultResolver,
+  usagePeriod,
 } from '../resolveEmissionsFactors'
 import { MongoDbIntensityStore } from '../stores/MongoDbIntensityStore'
 import { StaticFactorTable } from '../sources/StaticSource'
@@ -21,14 +26,17 @@ jest.mock('mongodb', () => ({
 }))
 jest.mock('@cloud-carbon-footprint/common', () => ({
   configLoader: jest.fn(),
+  getEmissionsFactors: jest.fn(),
   Logger: jest.fn().mockImplementation(() => ({ warn: mockWarn })),
 }))
 
 const mockConfig = (
   gridIntensity: Record<string, unknown> = {},
   mongodb: Record<string, unknown> = {},
+  topLevel: Record<string, unknown> = {},
 ) =>
   (configLoader as jest.Mock).mockReturnValue({
+    ...topLevel,
     MONGODB: mongodb,
     GRID_INTENSITY: {
       SOURCES: ['static'],
@@ -215,7 +223,7 @@ describe('resolveEmissionsFactors', () => {
         START,
         END,
         awsTable,
-        resolver,
+        { resolver },
       )
       expect(result.factors).toEqual({ 'eu-west-2': 0.0001875 })
       expect(result.provenance).toMatchObject({
@@ -238,5 +246,160 @@ describe('resolveEmissionsFactors', () => {
         ),
       ).rejects.toThrow(RangeError)
     })
+  })
+
+  describe('legacy Electricity Maps v3 lookup', () => {
+    const zones = { 'eu-west-2': 'GB' }
+    const legacyFactors = { 'eu-west-2': 0.000212 }
+    const withToken = () =>
+      mockConfig({}, {}, { ELECTRICITY_MAPS_TOKEN: 'token-for-tests' })
+
+    it('uses getEmissionsFactors when a token is set, labelling the single-hour sample as estimated', async () => {
+      withToken()
+      ;(getEmissionsFactors as jest.Mock).mockResolvedValue(legacyFactors)
+      const result = await resolveEmissionsFactors(
+        'AWS',
+        'eu-west-2',
+        START,
+        END,
+        awsTable,
+        { legacyElectricityMapsZones: zones },
+      )
+      expect(getEmissionsFactors).toHaveBeenCalledWith(
+        'eu-west-2',
+        START.toISOString(),
+        awsFactors,
+        zones,
+        expect.anything(),
+      )
+      expect(result.factors).toBe(legacyFactors)
+      expect(result.provenance).toEqual({
+        sourceId: 'electricitymaps-v3',
+        zoneId: 'GB',
+        granularity: 'hour',
+        basis: 'location-consumption',
+        factorType: 'lifecycle',
+        isEstimated: true,
+        licenceId: 'custom',
+        qualityTier: 'C',
+        modelVersion: 'unversioned',
+      })
+    })
+
+    it('is tier A for hourly usage', async () => {
+      withToken()
+      ;(getEmissionsFactors as jest.Mock).mockResolvedValue(legacyFactors)
+      const result = await resolveEmissionsFactors(
+        'AWS',
+        'eu-west-2',
+        utc('2026-03-10T13:00:00.000Z'),
+        utc('2026-03-10T14:00:00.000Z'),
+        awsTable,
+        { legacyElectricityMapsZones: zones },
+      )
+      expect(result.provenance).toMatchObject({
+        isEstimated: false,
+        qualityTier: 'A',
+      })
+    })
+
+    it('falls back to the resolver when the lookup returns the static table', async () => {
+      withToken()
+      ;(getEmissionsFactors as jest.Mock).mockImplementation(
+        async (_r, _d, staticFactors) => staticFactors,
+      )
+      const result = await resolveEmissionsFactors(
+        'AWS',
+        'eu-west-2',
+        START,
+        END,
+        awsTable,
+        { legacyElectricityMapsZones: zones },
+      )
+      expect(result.factors).toBe(awsFactors)
+      expect(result.provenance).toMatchObject({
+        sourceId: 'static',
+        qualityTier: 'D',
+      })
+    })
+
+    it('falls back to the resolver, warning, when the lookup fails', async () => {
+      withToken()
+      ;(getEmissionsFactors as jest.Mock).mockRejectedValue(
+        new Error('Failed to get data from Electricity Maps'),
+      )
+      const logger = { warn: jest.fn() }
+      const result = await resolveEmissionsFactors(
+        'AWS',
+        'eu-west-2',
+        START,
+        END,
+        awsTable,
+        { legacyElectricityMapsZones: zones, logger },
+      )
+      expect(result.provenance.sourceId).toBe('static')
+      expect(logger.warn.mock.calls[0][0]).toContain(
+        'Failed to get data from Electricity Maps',
+      )
+    })
+
+    it('is not used without a token', async () => {
+      const result = await resolveEmissionsFactors(
+        'AWS',
+        'eu-west-2',
+        START,
+        END,
+        awsTable,
+        { legacyElectricityMapsZones: zones },
+      )
+      expect(getEmissionsFactors).not.toHaveBeenCalled()
+      expect(result.provenance.sourceId).toBe('static')
+    })
+
+    it('is not used without a zone map, or with an explicit resolver', async () => {
+      withToken()
+      await resolveEmissionsFactors('AWS', 'eu-west-2', START, END, awsTable)
+      await resolveEmissionsFactors('AWS', 'eu-west-2', START, END, awsTable, {
+        legacyElectricityMapsZones: zones,
+        resolver: new GridIntensityResolver({
+          sources: [new FakeSource()],
+        }),
+      })
+      expect(getEmissionsFactors).not.toHaveBeenCalled()
+    })
+  })
+})
+
+describe('usagePeriod', () => {
+  it.each([
+    ['day', '2026-03-10T00:00:00.000Z', '2026-03-11T00:00:00.000Z'],
+    ['week', '2026-03-09T00:00:00.000Z', '2026-03-16T00:00:00.000Z'],
+    ['month', '2026-02-01T00:00:00.000Z', '2026-03-01T00:00:00.000Z'],
+    ['quarter', '2026-01-01T00:00:00.000Z', '2026-04-01T00:00:00.000Z'],
+    ['year', '2026-01-01T00:00:00.000Z', '2027-01-01T00:00:00.000Z'],
+  ])('a %s from %s ends, exclusive, at %s', (grouping, start, end) => {
+    expect(usagePeriod(utc(start), grouping)).toEqual({
+      start: utc(start),
+      end: utc(end),
+    })
+  })
+
+  it('treats an unknown grouping as a day', () => {
+    expect(usagePeriod(START, 'fortnight').end).toEqual(END)
+  })
+})
+
+describe('lastFullUtcDay', () => {
+  it('is yesterday in UTC', () => {
+    expect(lastFullUtcDay(utc('2026-11-05T13:45:00.000Z'))).toEqual({
+      start: utc('2026-11-04T00:00:00.000Z'),
+      end: utc('2026-11-05T00:00:00.000Z'),
+    })
+  })
+
+  it('defaults to the current time', () => {
+    const { end } = lastFullUtcDay()
+    expect(end.getTime()).toBeLessThanOrEqual(Date.now())
+    expect(Date.now() - end.getTime()).toBeLessThan(24 * 3600 * 1000)
   })
 })

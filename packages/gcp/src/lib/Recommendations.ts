@@ -21,11 +21,14 @@ import {
 } from '@cloud-carbon-footprint/core'
 import {
   convertBytesToGigabytes,
-  getEmissionsFactors,
   getHoursInMonth,
   Logger,
   RecommendationResult,
 } from '@cloud-carbon-footprint/common'
+import {
+  lastFullUtcDay,
+  resolveEmissionsFactors,
+} from '@cloud-carbon-footprint/grid-intensity'
 import { GCP_CLOUD_CONSTANTS, getGCPEmissionsFactors } from '../domain'
 import {
   INSTANCE_TYPE_COMPUTE_PROCESSOR_MAPPING,
@@ -529,12 +532,19 @@ export default class Recommendations implements ICloudRecommendationsService {
     region: string,
     logger: Logger,
   ): Promise<CloudConstantsEmissionsFactors> {
-    return await getEmissionsFactors(
+    const period = lastFullUtcDay()
+    const { factors } = await resolveEmissionsFactors(
+      'GCP',
       region,
-      new Date().toISOString(),
-      getGCPEmissionsFactors(),
-      GCP_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-      logger,
+      period.start,
+      period.end,
+      { factors: getGCPEmissionsFactors },
+      {
+        legacyElectricityMapsZones:
+          GCP_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
+        logger,
+      },
     )
+    return factors
   }
 }

@@ -13,10 +13,13 @@ import {
 } from '@cloud-carbon-footprint/core'
 import {
   containsAny,
-  getEmissionsFactors,
   Logger,
   RecommendationResult,
 } from '@cloud-carbon-footprint/common'
+import {
+  lastFullUtcDay,
+  resolveEmissionsFactors,
+} from '@cloud-carbon-footprint/grid-intensity'
 import RightsizingCurrentRecommendation from './RightsizingCurrentRecommendation'
 import {
   GPU_VIRTUAL_MACHINE_TYPE_PROCESSOR_MAPPING,
@@ -157,15 +160,19 @@ export default class AdvisorRecommendations implements ICloudRecommendationsServ
     rightsizingRecommendation: RightsizingRecommendation,
     logger: Logger,
   ) {
-    const dateTime = new Date().toISOString()
-    const emissionsFactors: CloudConstantsEmissionsFactors =
-      await getEmissionsFactors(
-        rightsizingRecommendation.region,
-        dateTime,
-        AZURE_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
-        AZURE_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-        logger,
-      )
+    const period = lastFullUtcDay()
+    const { factors: emissionsFactors } = await resolveEmissionsFactors(
+      'AZURE',
+      rightsizingRecommendation.region,
+      period.start,
+      period.end,
+      { factors: AZURE_EMISSIONS_FACTORS_METRIC_TON_PER_KWH },
+      {
+        legacyElectricityMapsZones:
+          AZURE_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
+        logger: logger,
+      },
+    )
 
     const computeFootprint = this.getComputeFootprint(
       rightsizingRecommendation,

@@ -13,13 +13,17 @@ import {
   convertGigaBytesToTerabyteHours,
   convertTerabytesToGigabytes,
   EstimationResult,
-  getEmissionsFactors,
   GroupBy,
   Logger,
   LookupTableInput,
   LookupTableOutput,
   wait,
 } from '@cloud-carbon-footprint/common'
+import {
+  lastFullUtcDay,
+  resolveEmissionsFactors,
+  usagePeriod,
+} from '@cloud-carbon-footprint/grid-intensity'
 import {
   accumulateKilowattHours,
   AccumulateKilowattHoursBy,
@@ -125,14 +129,19 @@ export default class ConsumptionManagementService {
 
       this.updateTimestampByGrouping(grouping, consumptionDetailRow)
 
-      const emissionsFactors: CloudConstantsEmissionsFactors =
-        await getEmissionsFactors(
-          consumptionDetailRow.region,
-          consumptionDetailRow.timestamp.toISOString(),
-          AZURE_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
-          AZURE_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-          this.consumptionManagementLogger,
-        )
+      const period = usagePeriod(consumptionDetailRow.timestamp, grouping)
+      const { factors: emissionsFactors } = await resolveEmissionsFactors(
+        'AZURE',
+        consumptionDetailRow.region,
+        period.start,
+        period.end,
+        { factors: AZURE_EMISSIONS_FACTORS_METRIC_TON_PER_KWH },
+        {
+          legacyElectricityMapsZones:
+            AZURE_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
+          logger: this.consumptionManagementLogger,
+        },
+      )
 
       const footprintEstimate = this.getFootprintEstimateFromUsageRow(
         consumptionDetailRow,
@@ -192,17 +201,21 @@ export default class ConsumptionManagementService {
           resourceLocation: inputDataRow.region,
         },
       }
-      const dateTime = new Date().toISOString()
       const consumptionDetailRow = new ConsumptionDetailRow(usageRow)
 
-      const emissionsFactors: CloudConstantsEmissionsFactors =
-        await getEmissionsFactors(
-          consumptionDetailRow.region,
-          dateTime,
-          AZURE_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
-          AZURE_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-          this.consumptionManagementLogger,
-        )
+      const period = lastFullUtcDay()
+      const { factors: emissionsFactors } = await resolveEmissionsFactors(
+        'AZURE',
+        consumptionDetailRow.region,
+        period.start,
+        period.end,
+        { factors: AZURE_EMISSIONS_FACTORS_METRIC_TON_PER_KWH },
+        {
+          legacyElectricityMapsZones:
+            AZURE_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
+          logger: this.consumptionManagementLogger,
+        },
+      )
 
       const footprintEstimate = this.getFootprintEstimateFromUsageRow(
         consumptionDetailRow,
