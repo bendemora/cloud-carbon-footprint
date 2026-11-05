@@ -76,15 +76,13 @@ export default class MongoDbCacheManager extends CacheManager {
     return new Promise(function (resolve, reject) {
       db.listCollections({ name: collectionName }).next(
         async (err: Error, collectionInfo: any) => {
-          if (err) reject(err)
+          if (err) return reject(err)
           if (collectionInfo) {
             const estimates = db.collection(collectionName)
 
-            resolve(
-              estimates
-                .aggregate(aggregationStages, { allowDiskUse: true })
-                .toArray() as EstimationResult[],
-            )
+            groupRowsByTimestamp(
+              estimates.aggregate(aggregationStages, { allowDiskUse: true }),
+            ).then(resolve, reject)
           } else {
             // The collection does not exist - so we can create it
             db.createCollection(collectionName)
@@ -113,9 +111,13 @@ export default class MongoDbCacheManager extends CacheManager {
 
       savedEstimates = estimates ?? []
     } catch (e) {
-      this.cacheLogger.warn(
-        `There was an error getting estimates from MongoDB: ${e.message}`,
+      // Fail the request rather than answer with no estimates: the dates are
+      // already marked as cached, so an empty answer would never be retried.
+      this.cacheLogger.error(
+        'There was an error getting estimates from MongoDB',
+        e,
       )
+      throw e
     }
     return savedEstimates
   }
@@ -295,7 +297,10 @@ export default class MongoDbCacheManager extends CacheManager {
       this.cacheLogger.info(`Paginating documents: ${skip} to ${limitMsg}`)
     }
 
-    // Add remaining post-query stages
+    // Add remaining post-query stages. Rows are returned one document each
+    // and grouped by timestamp in groupRowsByTimestamp: grouping them on the
+    // server would put every row of a timestamp into one document, which
+    // fails once that document passes MongoDB's 16 MiB limit.
     aggregationStages.push(
       {
         $limit: isNaN(request.limit) ? 50000 : request.limit,
@@ -307,23 +312,32 @@ export default class MongoDbCacheManager extends CacheManager {
         },
       },
       {
-        $group: {
-          _id: '$timestamp',
-          timestamp: { $first: '$timestamp' },
-          serviceEstimates: { $push: '$$ROOT' },
-          groupBy: { $first: '$groupBy' },
-        },
-      },
-      {
-        $unset: [
-          '_id',
-          'serviceEstimates._id',
-          'serviceEstimates.timestamp',
-          'serviceEstimates.groupBy',
-        ],
+        $unset: ['_id'],
       },
     )
 
     return aggregationStages
   }
+}
+
+/**
+ * Builds one EstimationResult per timestamp from the stored rows, in the
+ * order the timestamps first appear. Each row is a service estimate with the
+ * timestamp and groupBy of its EstimationResult, as setEstimates stores it.
+ * The cursor is read in batches, so no single document holds a whole period.
+ */
+const groupRowsByTimestamp = async (
+  rows: AsyncIterable<any>,
+): Promise<EstimationResult[]> => {
+  const resultsByTimestamp = new Map<number, EstimationResult>()
+  for await (const { timestamp, groupBy, ...serviceEstimate } of rows) {
+    const key = new Date(timestamp).getTime()
+    let result = resultsByTimestamp.get(key)
+    if (!result) {
+      result = { timestamp, serviceEstimates: [], groupBy } as EstimationResult
+      resultsByTimestamp.set(key, result)
+    }
+    result.serviceEstimates.push(serviceEstimate)
+  }
+  return [...resultsByTimestamp.values()]
 }

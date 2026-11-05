@@ -15,10 +15,12 @@ import {
 
 import {
   EstimationRequestValidationError,
+  EstimationResult,
   Logger,
   PartialDataError,
   RecommendationsRequestValidationError,
 } from '@cloud-carbon-footprint/common'
+import { writeEstimationResults } from './utils/writeEstimationResults'
 
 const apiLogger = new Logger('api')
 
@@ -54,11 +56,11 @@ export const FootprintApiMiddleware = async function (
     rawRequest.groupBy = 'day'
   }
   const footprintApp = new App()
+  let estimationResults: EstimationResult[]
   try {
     const estimationRequest = createValidFootprintRequest(rawRequest)
-    const estimationResults =
+    estimationResults =
       await footprintApp.getCostAndEstimates(estimationRequest)
-    res.json(estimationResults)
   } catch (e) {
     apiLogger.error(`Unable to process footprint request.`, e)
     if (
@@ -71,6 +73,25 @@ export const FootprintApiMiddleware = async function (
     ) {
       res.status(416).send(e.message)
     } else res.status(500).send('Internal Server Error')
+    return
+  }
+
+  // Stream the JSON rather than res.json, which builds the whole response as
+  // one string and fails once it passes the longest string Node can hold.
+  try {
+    res.type('json')
+    await writeEstimationResults(res, estimationResults)
+    res.end()
+  } catch (e) {
+    apiLogger.error(`Unable to send footprint response.`, e)
+    if (res.headersSent) {
+      // Part of the response is out: close the connection so the client sees
+      // an incomplete response rather than JSON that looks complete.
+      res.destroy()
+    } else {
+      res.removeHeader('Content-Type')
+      res.status(500).send('Internal Server Error')
+    }
   }
 }
 
