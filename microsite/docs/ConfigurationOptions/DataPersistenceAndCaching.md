@@ -34,11 +34,17 @@ GCS_CACHE_BUCKET_NAME=”some-bucket-name”
 _Note: The Google service account that you are using must have access and permissions to read/write into the bucket._
 
 **Note on Memory Limitations:**
-For JSON Filesystem cache modes, CCF uses read and write streams to get and set estimates. Ultimately, this helps avoid running into JS memory limitations when inevitably needing to stringify the data. The set back for this approach as the data scales is when sending through the REST API result. With express, the JSON response value passed through will need to get stringified. Usually once the data size reaches around 500 mb is when you might see an issue like:
+For the JSON file cache modes (local filesystem and Google Cloud Storage), CCF reads the cache file as a stream and writes it in pieces of about 16 MiB. The REST API streams its JSON response one service estimate at a time. Neither the cache file nor the response has to fit in one JavaScript string, so the size of a whole date range is not limited by the longest string Node can hold (536,870,888 characters, about 512 MiB, on 64-bit Node).
 
-`RangeError: Invalid string length`
+Two limits remain:
 
-For this reason, we have chosen to focus our support on the MongoDB cache mode, where we have implemented pagination for the REST API response which will scale better and avoid the memory limitations. We believe the JSON File cache mode is a good choice for smaller data sets.
+- The cache file holds one period (one day, by default) per line, and CCF reads and writes each line as one string. One period's estimates must therefore come to less than about 512 MiB of JSON. That is about 1.1 million service estimates with provenance, or about 2.3 million without, measured with a typical AWS row; rows with tags or longer names are larger. Past that, reading or writing the cache fails with an error like:
+
+  `RangeError: Invalid string length`
+
+- The API holds all the estimates of a request in memory, and the CCF client reads each response whole, so very large date ranges are still limited by the memory of the server and of the browser.
+
+For large data sets we recommend the MongoDB cache mode, which has no per-period limit and paginates the REST API response. We believe the JSON File cache mode is a good choice for smaller data sets.
 
 ## MongoDB Storage
 
@@ -90,8 +96,9 @@ A sample request using limit and skip parameters may look like:
 
 _Note: This feature only works when the MONGODB cache mode is enabled. The limit and skip parameters will be ignored for other cache modes._
 
-_To avoid potential issues with memory limitations when loading and aggregating estimates from the cache, a default value of 50,000 documents will be used for the page limit.
-This ensures that individual timestamps with significantly large amount of estimates are handled properly. Custom limit values that exceed this number will result in a validation error._
+_To bound the memory each request needs, a default value of 50,000 documents will be used for the page limit. Custom limit values that exceed this number will result in a validation error._
+
+_Each document is one service estimate. CCF reads a page as individual documents and groups them by timestamp itself, so the estimates of one timestamp never have to fit in one MongoDB document (MongoDB limits a document to 16 MiB). If MongoDB cannot return the estimates, the API answers with HTTP 500 instead of an empty list._
 
 ### Filtering Estimates
 

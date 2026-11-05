@@ -54,6 +54,145 @@ jest.mock('../common/helpers', () => {
 const mockGetDates = getDatesWithinRequestTimeFrame as jest.Mock
 const mockAggregation = jest.fn()
 
+const { BSON, ObjectId } = jest.requireActual('mongodb')
+const MONGODB_MAX_DOCUMENT_BYTES = 16 * 1024 * 1024
+
+type Doc = Record<string, any>
+
+const fieldValue = (doc: Doc, expression: string) =>
+  expression === '$$ROOT' ? doc : doc[expression.slice(1)]
+
+const unsetPath = (doc: Doc, path: string): Doc => {
+  const [head, ...rest] = path.split('.')
+  if (rest.length === 0) {
+    const { [head]: _removed, ...kept } = doc
+    return kept
+  }
+  const value = doc[head]
+  return {
+    ...doc,
+    [head]: Array.isArray(value)
+      ? value.map((item) => unsetPath(item, rest.join('.')))
+      : unsetPath(value, rest.join('.')),
+  }
+}
+
+const groupDocs = (docs: Doc[], spec: Doc): Doc[] => {
+  const { _id: key, ...accumulators } = spec
+  const groups = new Map<unknown, Doc>()
+  for (const doc of docs) {
+    const id = fieldValue(doc, key)
+    const groupKey = id instanceof Date ? id.getTime() : id
+    if (!groups.has(groupKey)) {
+      const group: Doc = { _id: id }
+      for (const [field, accumulator] of Object.entries(accumulators)) {
+        if ('$first' in accumulator)
+          group[field] = fieldValue(doc, accumulator.$first)
+        if ('$push' in accumulator) group[field] = []
+      }
+      groups.set(groupKey, group)
+    }
+    for (const [field, accumulator] of Object.entries(accumulators)) {
+      if ('$push' in accumulator)
+        groups.get(groupKey)[field].push(fieldValue(doc, accumulator.$push))
+    }
+  }
+  return [...groups.values()]
+}
+
+const sortDocs = (docs: Doc[], spec: Doc): Doc[] =>
+  [...docs].sort((a, b) => {
+    for (const [field, direction] of Object.entries(spec)) {
+      if (a[field] < b[field]) return -direction
+      if (a[field] > b[field]) return direction
+    }
+    return 0
+  })
+
+/**
+ * Stands in for collection.aggregate: runs the stages loadEstimates uses
+ * against in-memory rows and, like the server, fails when the pipeline would
+ * return a document larger than MongoDB's 16 MiB BSON document limit.
+ */
+const fakeAggregate =
+  (rows: Doc[]) =>
+  (stages: Doc[]): AsyncIterable<Doc> & { toArray: () => Promise<Doc[]> } => {
+    let docs = rows
+    for (const stage of stages) {
+      const [operator, spec] = Object.entries(stage)[0]
+      if (operator === '$match')
+        continue // every fixture row matches
+      else if (operator === '$skip') docs = docs.slice(spec)
+      else if (operator === '$limit') docs = docs.slice(0, spec)
+      else if (operator === '$sort') docs = sortDocs(docs, spec)
+      else if (operator === '$group') docs = groupDocs(docs, spec)
+      else if (operator === '$unset')
+        docs = docs.map((doc) =>
+          spec.reduce((kept: Doc, path: string) => unsetPath(kept, path), doc),
+        )
+      else throw new Error(`fakeAggregate does not support ${operator}`)
+    }
+    const checkSize = (doc: Doc) => {
+      const bytes = BSON.calculateObjectSize(doc)
+      if (bytes > MONGODB_MAX_DOCUMENT_BYTES)
+        throw new Error(`BSONObjectTooLarge: document is ${bytes} bytes`)
+      return doc
+    }
+    return {
+      async *[Symbol.asyncIterator]() {
+        for (const doc of docs) yield checkSize(doc)
+      },
+      toArray: async () => docs.map(checkSize),
+    }
+  }
+
+const failingCursor = (error: Error) => ({
+  // eslint-disable-next-line require-yield
+  async *[Symbol.asyncIterator]() {
+    throw error
+  },
+  toArray: async () => {
+    throw error
+  },
+})
+
+const staticProvenance = {
+  sourceId: 'static',
+  zoneId: 'aws:us-east-1',
+  granularity: 'year',
+  basis: 'location-production',
+  factorType: 'direct',
+  isEstimated: false,
+  licenceId: 'open-attribution',
+  qualityTier: 'D',
+  gCO2ePerKWh: 379.069,
+  modelVersion: 'unversioned',
+}
+
+/** A row as setEstimates stores it: a service estimate plus timestamp and groupBy. */
+const storedRow = (timestamp: Date, index: number): Doc => ({
+  _id: new ObjectId(),
+  cloudProvider: 'AWS',
+  kilowattHours: 0.0123456789012,
+  co2e: 0.00000412345678901,
+  cost: 1.23456789,
+  usesAverageCPUConstant: false,
+  accountId: '123456789012',
+  accountName: '123456789012',
+  serviceName: `AmazonEC2-${index}`,
+  region: 'us-east-1',
+  provenance: staticProvenance,
+  timestamp,
+  groupBy: 'day',
+})
+
+const asServiceEstimate = ({
+  _id,
+  timestamp: _timestamp,
+  groupBy: _groupBy,
+  ...row
+}: Doc) => row
+
 describe('MongoDbCacheManager', () => {
   afterEach(() => {
     jest.clearAllMocks()
@@ -164,8 +303,8 @@ describe('MongoDbCacheManager', () => {
       expect(estimates).toEqual(mockEstimates)
     })
 
-    it('logs a warning when there is an error getting estimates', async () => {
-      jest.spyOn(Logger.prototype, 'warn').mockImplementation()
+    it('fails instead of returning no estimates when loading them fails', async () => {
+      jest.spyOn(Logger.prototype, 'error').mockImplementation()
       const mongoDbCacheManager = new MongoDbCacheManager()
 
       jest
@@ -174,61 +313,92 @@ describe('MongoDbCacheManager', () => {
           MongoDbCacheManager.mongoClient = mockClient as mongo.MongoClient
         })
 
-      const testErrorMessage = 'Example error'
+      const testError = new Error('Example error')
 
       const loadEstimatesSpy = jest.spyOn(mongoDbCacheManager, 'loadEstimates')
-      ;(loadEstimatesSpy as jest.Mock).mockRejectedValue(
-        new Error(testErrorMessage),
-      )
+      ;(loadEstimatesSpy as jest.Mock).mockRejectedValue(testError)
 
-      const estimates = await mongoDbCacheManager.getEstimates(request, 'day')
-
-      expect(Logger.prototype.warn).toHaveBeenCalledWith(
-        `There was an error getting estimates from MongoDB: ${testErrorMessage}`,
+      await expect(
+        mongoDbCacheManager.getEstimates(request, 'day'),
+      ).rejects.toThrow(testError)
+      expect(Logger.prototype.error).toHaveBeenCalledWith(
+        'There was an error getting estimates from MongoDB',
+        testError,
       )
-      expect(estimates).toEqual([])
     })
   })
 
   describe('loads estimates', () => {
     let mockClient: Partial<mongo.MongoClient>
     const testDate = new Date('2022-01-01')
-    const mockEstimates: EstimationResult[] = [
+    const nextDate = new Date('2022-01-02')
+    const rows = [
+      storedRow(testDate, 0),
+      storedRow(nextDate, 1),
+      storedRow(testDate, 2),
+    ]
+    const expectedEstimates = [
       {
         timestamp: testDate,
-        groupBy: GroupBy.day,
-        serviceEstimates: [],
-        periodStartDate: testDate,
-        periodEndDate: testDate,
+        serviceEstimates: [
+          asServiceEstimate(rows[0]),
+          asServiceEstimate(rows[2]),
+        ],
+        groupBy: 'day',
+      },
+      {
+        timestamp: nextDate,
+        serviceEstimates: [asServiceEstimate(rows[1])],
+        groupBy: 'day',
       },
     ]
 
     const request = {
       startDate: testDate,
-      endDate: new Date('2022-01-02'),
+      endDate: nextDate,
       ignoreCache: false,
       groupBy: 'day',
       skip: 0,
-      limit: 1,
+      limit: 10,
+    }
+
+    const mockClientWithRows = (
+      aggregate: (stages: Doc[]) => unknown,
+    ): Partial<mongo.MongoClient> => ({
+      db: jest.fn().mockImplementation(() => ({
+        listCollections: jest.fn().mockImplementation(() => ({
+          next: jest.fn().mockImplementation((callback) => {
+            callback(undefined, { name: 'test-collection' })
+          }),
+        })),
+        collection: jest.fn().mockImplementation(() => ({
+          aggregate: mockAggregation.mockImplementation(aggregate),
+        })),
+      })),
+      close: jest.fn(),
+      connect: jest.fn(),
+    })
+
+    const loadEstimates = async (
+      client: Partial<mongo.MongoClient>,
+      estimationRequest: EstimationRequest,
+    ) => {
+      const mongoDbCacheManager = new MongoDbCacheManager()
+      jest
+        .spyOn(MongoDbCacheManager, 'createDbConnection')
+        .mockImplementation(async () => {
+          MongoDbCacheManager.mongoClient = client as mongo.MongoClient
+        })
+      await MongoDbCacheManager.createDbConnection()
+      return mongoDbCacheManager.loadEstimates(
+        MongoDbCacheManager.mongoClient.db(mongoDbCacheManager.mongoDbName),
+        'estimates-by-day',
+        estimationRequest,
+      )
     }
 
     beforeEach(() => {
-      mockClient = {
-        db: jest.fn().mockImplementation(() => ({
-          listCollections: jest.fn().mockImplementation(() => ({
-            next: jest.fn().mockImplementation((callback) => {
-              callback(undefined, { name: 'test-collection' })
-            }),
-          })),
-          collection: jest.fn().mockImplementation(() => ({
-            aggregate: mockAggregation.mockImplementation(() => ({
-              toArray: jest.fn().mockResolvedValue(mockEstimates),
-            })),
-          })),
-        })),
-        close: jest.fn(),
-        connect: jest.fn(),
-      }
+      mockClient = mockClientWithRows(fakeAggregate(rows))
     })
 
     afterEach(() => {
@@ -238,27 +408,76 @@ describe('MongoDbCacheManager', () => {
     it('loads estimates from a mongo database collection', async () => {
       jest.spyOn(Logger.prototype, 'info').mockImplementation()
 
-      const mongoDbCacheManager = new MongoDbCacheManager()
-
-      jest
-        .spyOn(MongoDbCacheManager, 'createDbConnection')
-        .mockImplementation(async () => {
-          MongoDbCacheManager.mongoClient = mockClient as mongo.MongoClient
-        })
-
-      await MongoDbCacheManager.createDbConnection()
-      const estimates = await mongoDbCacheManager.loadEstimates(
-        MongoDbCacheManager.mongoClient.db(mongoDbCacheManager.mongoDbName),
-        'estimates-by-day',
-        request,
-      )
+      const estimates = await loadEstimates(mockClient, request)
 
       expect(Logger.prototype.info).toHaveBeenCalledWith(
         `Paginating documents: ${request.skip} to ${
           request.skip + request.limit
         }`,
       )
-      expect(estimates).toEqual(mockEstimates)
+      expect(estimates).toEqual(expectedEstimates)
+    })
+
+    it('groups a 50,000-row page of one day with provenance without returning one oversized document', async () => {
+      jest.spyOn(Logger.prototype, 'info').mockImplementation()
+      const oneDayOfRows = Array.from({ length: 50000 }, (_, index) =>
+        storedRow(testDate, index),
+      )
+      // The rows of one day, grouped into one document, exceed the limit.
+      expect(
+        BSON.calculateObjectSize({
+          serviceEstimates: oneDayOfRows.map(asServiceEstimate),
+        }),
+      ).toBeGreaterThan(MONGODB_MAX_DOCUMENT_BYTES)
+
+      const estimates = await loadEstimates(
+        mockClientWithRows(fakeAggregate(oneDayOfRows)),
+        { ...request, limit: undefined },
+      )
+
+      expect(estimates).toHaveLength(1)
+      expect(estimates[0].timestamp).toEqual(testDate)
+      expect(estimates[0].groupBy).toEqual('day')
+      expect(estimates[0].serviceEstimates).toHaveLength(50000)
+      expect(estimates[0].serviceEstimates[0]).toEqual(
+        asServiceEstimate(oneDayOfRows[0]),
+      )
+      expect(estimates[0].serviceEstimates[49999]).toEqual(
+        asServiceEstimate(oneDayOfRows[49999]),
+      )
+    })
+
+    it('fails when reading the aggregation fails', async () => {
+      jest.spyOn(Logger.prototype, 'info').mockImplementation()
+      const cursorError = new Error('cursor error')
+
+      await expect(
+        loadEstimates(
+          mockClientWithRows(() => failingCursor(cursorError)),
+          request,
+        ),
+      ).rejects.toThrow(cursorError)
+    })
+
+    it('fails when listing the collections fails', async () => {
+      jest.spyOn(Logger.prototype, 'info').mockImplementation()
+      const listError = new Error('list error')
+      const mockClientWithListError: Partial<mongo.MongoClient> = {
+        db: jest.fn().mockImplementation(() => ({
+          createCollection: jest.fn(),
+          listCollections: jest.fn().mockImplementation(() => ({
+            next: jest.fn().mockImplementation((callback) => {
+              callback(listError)
+            }),
+          })),
+        })),
+        close: jest.fn(),
+        connect: jest.fn(),
+      }
+
+      await expect(
+        loadEstimates(mockClientWithListError, request),
+      ).rejects.toThrow(listError)
     })
 
     it('creates a new mongo collection if one does not exist', async () => {
@@ -279,20 +498,10 @@ describe('MongoDbCacheManager', () => {
         close: jest.fn(),
         connect: jest.fn(),
       }
-
-      const mongoDbCacheManager = new MongoDbCacheManager()
       jest.spyOn(Logger.prototype, 'info').mockImplementation()
-      jest
-        .spyOn(MongoDbCacheManager, 'createDbConnection')
-        .mockImplementation(async () => {
-          MongoDbCacheManager.mongoClient =
-            mockClientWithoutCollection as mongo.MongoClient
-        })
 
-      await MongoDbCacheManager.createDbConnection()
-      const estimates = await mongoDbCacheManager.loadEstimates(
-        MongoDbCacheManager.mongoClient.db(mongoDbCacheManager.mongoDbName),
-        'estimates-by-day',
+      const estimates = await loadEstimates(
+        mockClientWithoutCollection,
         request,
       )
 
@@ -314,25 +523,14 @@ describe('MongoDbCacheManager', () => {
         [`${filter[0]}`]: filter[1],
       }
 
-      const mongoDbCacheManager = new MongoDbCacheManager()
-
-      jest
-        .spyOn(MongoDbCacheManager, 'createDbConnection')
-        .mockImplementation(async () => {
-          MongoDbCacheManager.mongoClient = mockClient as mongo.MongoClient
-        })
-
-      await MongoDbCacheManager.createDbConnection()
-      const estimates = await mongoDbCacheManager.loadEstimates(
-        MongoDbCacheManager.mongoClient.db(mongoDbCacheManager.mongoDbName),
-        'estimates-by-day',
-        request,
-      )
+      const estimates = await loadEstimates(mockClient, request)
 
       const filterValue =
         filter[0] === 'tags' ? filter[1]['test-key'] : filter[1]
       const matchOperator = filter[0] === 'tags' ? '$eq' : '$in'
 
+      // Rows come back one document each and are grouped by timestamp in
+      // Node, so no returned document holds a whole day of rows.
       const aggregation = [
         {
           $match: {
@@ -346,28 +544,13 @@ describe('MongoDbCacheManager', () => {
         { $skip: 0 },
         { $limit: 50000 },
         { $sort: { _id: 1, timestamp: 1 } },
-        {
-          $group: {
-            _id: '$timestamp',
-            groupBy: { $first: '$groupBy' },
-            serviceEstimates: { $push: '$$ROOT' },
-            timestamp: { $first: '$timestamp' },
-          },
-        },
-        {
-          $unset: [
-            '_id',
-            'serviceEstimates._id',
-            'serviceEstimates.timestamp',
-            'serviceEstimates.groupBy',
-          ],
-        },
+        { $unset: ['_id'] },
       ]
 
       expect(mockAggregation).toHaveBeenCalledWith(aggregation, {
         allowDiskUse: true,
       })
-      expect(estimates).toEqual(mockEstimates)
+      expect(estimates).toEqual(expectedEstimates)
     })
   })
 
