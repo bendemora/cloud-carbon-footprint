@@ -23,7 +23,8 @@ const overlapMs = (point: IntensityPoint, start: Date, end: Date): number =>
 /**
  * Time-weighted mean of the points over [start, end) (section 6.2, step 5).
  * Each point counts in proportion to its overlap with the range. Null when
- * no point overlaps. The points are assumed not to overlap each other.
+ * no point overlaps. The points must not overlap each other: the resolver
+ * keeps only whole UTC periods of one granularity, one per start.
  */
 export const timeWeightedMean = (
   points: IntensityPoint[],

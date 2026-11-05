@@ -282,6 +282,16 @@ Implementation notes (Phase 1, recorded as the code landed):
 
 Failures (network, auth, plan) are logged once per source and zone per run, negative-cached for the capability TTL, and never abort an estimation run.
 
+Implementation notes (Phase 1):
+
+- Step 2 compares a source's finest granularity with the coarsest granularity whose shortest period fits in the usage period: a week takes daily data, a quarter monthly data, so monthly data is coarser than a week and annual data coarser than a quarter.
+- The capability window limits what is fetched, not what is used (6.3: stored history is what lets a trailing subscription build a longer record). Step 4 reads the store first; only missing periods that lie wholly inside `[earliest, latest]` are fetched. A usage period that runs past `latest` (today, this month) is served from the source's finest granularity up to `latest`, and its partial coverage marks it estimated.
+- A failed fetch or capability probe stops that zone's fetches for the TTL, but stored points are still used; after a failed probe the last known capability is kept.
+- Fetched points that are not whole UTC periods of the requested granularity, source and zone are dropped with a warning, so points never overlap and coverage cannot read 1 over a gap.
+- Warnings are logged at most once per source, zone and kind per TTL rather than per run, because the default resolver lives for the API server's process. Store read and write failures are reported per source and zone.
+- Points from `session`-retention sources are kept in an in-memory store owned by the resolver and cleared every TTL, so a run fetches each period once; they are never written to the configured store.
+- A resolved intensity of 0 reaches `estimateCo2` as both the region and the `Unknown` factor, because `estimateCo2` treats 0 as missing; `estimateKwh` returns 0 kWh rather than Infinity when no non-zero factor exists.
+
 ### 6.3 Licence model (the commercial option)
 
 Every source and every BYO dataset row declares a `LicenceDeclaration`. The tool's behaviour follows from it:
@@ -483,7 +493,7 @@ Items to confirm against live services before the phase that depends on them. Ea
 | `GRID_INTENSITY_STORE` | `LOCAL` | `LOCAL` or `MONGODB` |
 | `GRID_INTENSITY_STORE_PATH` | `.ccf/grid-intensity` | LOCAL store directory |
 | `GRID_INTENSITY_RETENTION_DAYS_<SOURCE>` | per source default | Retention for `per-contract` sources |
-| `GRID_INTENSITY_CAPABILITY_TTL_HOURS` | `24` | Probe cache lifetime |
+| `GRID_INTENSITY_CAPABILITY_TTL_HOURS` | `24` | Lifetime of probe answers, failures, warnings and `session` points |
 | `GRID_INTENSITY_DATASET_DIR` | unset | Directory for BYO dataset files |
 | `GRID_INTENSITY_EMISSION_FACTOR_TYPE` | `lifecycle` | `lifecycle` or `direct` |
 | `GRID_INTENSITY_FLOW_TRACED` | `true` | Electricity Maps `flowTraced` |

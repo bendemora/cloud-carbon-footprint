@@ -5,9 +5,13 @@
 
 import { missingPeriods, timeWeightedMean } from './coverage'
 import {
+  addPeriod,
+  coarsestWithin,
   GRANULARITIES,
   isAtLeastAsFine,
+  Period,
   periodsCovering,
+  startOfPeriod,
   usageGranularityOf,
 } from './granularity'
 import { requiresAcknowledgement } from './licence'
@@ -36,7 +40,10 @@ export interface GridIntensityResolverOptions {
   store?: IntensityStore
   /** Source ids the operator asserts they are licensed to use. */
   licenceAcknowledgements?: string[]
-  /** How long capability answers and failures are cached. Default 24. */
+  /**
+   * How long capability answers, failures, warnings and session-retention
+   * points are kept. Default 24.
+   */
   capabilityTtlHours?: number
   /** CCF energy model version stamped on provenance. Default 'unversioned'. */
   modelVersion?: string
@@ -65,11 +72,12 @@ interface Candidate {
  * Picks the best available source for each usage period and returns the
  * time-weighted intensity with provenance (section 6.2 of the design).
  *
- * Warnings are logged once per source and zone for an instance's lifetime,
- * and failures are negative-cached for the capability TTL. The default
- * resolver that resolveEmissionsFactors builds lives for the process: one
- * CLI run, or the life of the API server, so there a recurring failure is
- * logged once per server process.
+ * Stored points are read before a source's lookback window or a recent
+ * failure is considered: those limit what is fetched, not what is used.
+ * Failures stop a zone's fetches for the capability TTL. Each warning is
+ * logged at most once per source, zone and kind within the TTL, so the
+ * default resolver, which lives for the process (one CLI run, or the life
+ * of the API server), logs a recurring failure again each TTL.
  */
 export class GridIntensityResolver implements IntensityResolver {
   private readonly sources: GridIntensitySource[]
@@ -84,7 +92,11 @@ export class GridIntensityResolver implements IntensityResolver {
     { capability: ZoneCapability | null; expiresAt: number }
   >()
   private readonly failedUntil = new Map<string, number>()
-  private readonly warned = new Set<string>()
+  /** Warning id to the time it may be logged again. */
+  private readonly warnedUntil = new Map<string, number>()
+  /** Points of session-retention sources: never stored, kept for the TTL. */
+  private session = new InMemoryIntensityStore()
+  private sessionExpiresAt = 0
 
   constructor(options: GridIntensityResolverOptions) {
     this.sources = options.sources
@@ -107,22 +119,17 @@ export class GridIntensityResolver implements IntensityResolver {
         `Empty usage period ${start.toISOString()} to ${end.toISOString()}`,
       )
     const usageGranularity = usageGranularityOf(start, end)
+    const fineEnough = coarsestWithin(start, end)
 
     // Step 2: sources fine enough for the usage period first, in order;
     // coarser ones only when none of those can serve it, finest first
     // (a live monthly value beats the static annual one), ties in order.
     const coarser: Candidate[] = []
     for (const source of this.sources) {
-      const candidate = await this.candidate(
-        source,
-        provider,
-        region,
-        start,
-        end,
-      )
+      const candidate = await this.candidate(source, provider, region)
       if (!candidate) continue
       const finest = finestOf(candidate.capability.granularities)
-      if (!isAtLeastAsFine(finest, usageGranularity)) {
+      if (!isAtLeastAsFine(finest, fineEnough)) {
         coarser.push(candidate)
         continue
       }
@@ -149,23 +156,16 @@ export class GridIntensityResolver implements IntensityResolver {
     throw new NoIntensityAvailableError(provider, region)
   }
 
-  /** Steps 1 to 3: mapping, capability and licence checks. */
+  /** Steps 1 and 3: mapping, capability and licence checks. */
   private async candidate(
     source: GridIntensitySource,
     provider: CloudProvider,
     region: string,
-    start: Date,
-    end: Date,
   ): Promise<Candidate | null> {
     const zoneId = source.mapRegion(provider, region)
     if (!zoneId) return null
-    const zoneRef = `${source.id}|${zoneId}`
-    if ((this.failedUntil.get(zoneRef) ?? 0) > this.now().getTime()) return null
-
     const capability = await this.capability(source, zoneId)
     if (!capability || !capability.granularities.length) return null
-    if (capability.earliest && start < capability.earliest) return null
-    if (capability.latest && end > capability.latest) return null
     if (
       requiresAcknowledgement(capability.licence) &&
       !this.acknowledged.has(source.id)
@@ -179,6 +179,11 @@ export class GridIntensityResolver implements IntensityResolver {
     return { source, zoneId, capability }
   }
 
+  /**
+   * The cached answer for the TTL. When a probe fails, the last answer (if
+   * any) is kept for another TTL, so stored points stay usable while the
+   * zone's fetches are stopped.
+   */
   private async capability(
     source: GridIntensitySource,
     zoneId: string,
@@ -187,17 +192,18 @@ export class GridIntensityResolver implements IntensityResolver {
     const nowMs = this.now().getTime()
     const cached = this.capabilityCache.get(zoneRef)
     if (cached && cached.expiresAt > nowMs) return cached.capability
+    let capability: ZoneCapability | null
     try {
-      const capability = await source.capabilities(zoneId)
-      this.capabilityCache.set(zoneRef, {
-        capability,
-        expiresAt: nowMs + this.ttlMs,
-      })
-      return capability
+      capability = await source.capabilities(zoneId)
     } catch (error) {
+      capability = cached?.capability ?? null
       this.fail(source, zoneId, 'capability probe', error)
-      return null
     }
+    this.capabilityCache.set(zoneRef, {
+      capability,
+      expiresAt: nowMs + this.ttlMs,
+    })
+    return capability
   }
 
   /** Steps 4 to 6: store, fetch what is missing, time-weight, provenance. */
@@ -207,19 +213,35 @@ export class GridIntensityResolver implements IntensityResolver {
     end: Date,
     usageGranularity: Granularity,
   ): Promise<ResolvedIntensity | null> {
-    const granularity = requestGranularity(
-      capability.granularities,
-      usageGranularity,
-    )
+    // A period running past the end of the source's data (today, this
+    // month) is served from its finest data, so the part before `latest`
+    // is covered; the partial coverage marks the result estimated.
+    const granularity =
+      capability.latest && end > capability.latest
+        ? finestOf(capability.granularities)
+        : requestGranularity(capability.granularities, usageGranularity)
     const persist = source.persist !== false
+    const store =
+      capability.licence.retention === 'session'
+        ? this.sessionStore()
+        : this.store
     const stored = persist
-      ? await this.storedPoints(source.id, zoneId, start, end, granularity)
+      ? await this.storedPoints(
+          store,
+          source.id,
+          zoneId,
+          start,
+          end,
+          granularity,
+        )
       : []
     const fetched: IntensityPoint[] = []
-    for (const range of missingPeriods(
-      periodsCovering(start, end, granularity),
-      stored,
-    )) {
+    const fetchable = this.isFailing(source.id, zoneId)
+      ? []
+      : periodsCovering(start, end, granularity).filter((period) =>
+          isWithinWindow(period, capability),
+        )
+    for (const range of missingPeriods(fetchable, stored)) {
       try {
         const points = await source.fetch(
           zoneId,
@@ -227,19 +249,14 @@ export class GridIntensityResolver implements IntensityResolver {
           range.end,
           granularity,
         )
-        // The bounds are a check on fetched data before it is stored (design
-        // section 13). Values from code are not fetched or stored, and CCF's
-        // GCP multi-region factors (sums across data centres) exceed them.
-        fetched.push(
-          ...(persist ? this.validPoints(source.id, zoneId, points) : points),
-        )
+        fetched.push(...this.usablePoints(source, zoneId, granularity, points))
       } catch (error) {
         this.fail(source, zoneId, 'fetch', error)
         break
       }
     }
-    if (persist && fetched.length && capability.licence.retention !== 'session')
-      await this.storePoints(fetched)
+    if (persist && fetched.length)
+      await this.storePoints(store, source.id, zoneId, fetched)
 
     const byStart = new Map<number, IntensityPoint>()
     for (const point of [...stored, ...fetched])
@@ -274,27 +291,76 @@ export class GridIntensityResolver implements IntensityResolver {
     }
   }
 
-  private validPoints(
-    sourceId: string,
+  /**
+   * Drops points that are not whole UTC periods of the requested
+   * granularity for this source and zone, so points cannot overlap and the
+   * coverage cannot read 1 over a gap. The 0 to 1500 gCO2e/kWh bounds apply
+   * to fetched data, not to values from code (persist false): CCF's GCP
+   * multi-region factors are sums across data centres and exceed them.
+   */
+  private usablePoints(
+    source: GridIntensitySource,
     zoneId: string,
+    granularity: Granularity,
     points: IntensityPoint[],
   ): IntensityPoint[] {
-    const valid = points.filter(
+    const whole = points.filter(
+      (p) =>
+        p.sourceId === source.id &&
+        p.zoneId === zoneId &&
+        p.granularity === granularity &&
+        p.periodStart.getTime() ===
+          startOfPeriod(p.periodStart, granularity).getTime() &&
+        p.periodEnd.getTime() ===
+          addPeriod(p.periodStart, granularity).getTime(),
+    )
+    this.warnDropped(
+      `alignment|${source.id}|${zoneId}`,
+      points.length - whole.length,
+      `from grid intensity source ${source.id} for zone ${zoneId} that are not whole UTC ${granularity} periods of that zone.`,
+    )
+    if (source.persist === false) return whole
+    const valid = whole.filter(
       (p) =>
         Number.isFinite(p.gCO2ePerKWh) &&
         p.gCO2ePerKWh >= 0 &&
         p.gCO2ePerKWh <= MAX_G_CO2E_PER_KWH,
     )
-    const dropped = points.length - valid.length
-    if (dropped > 0)
-      this.warnOnce(
-        `quality|${sourceId}|${zoneId}`,
-        `Dropped ${dropped} point${dropped === 1 ? '' : 's'} from grid intensity source ${sourceId} for zone ${zoneId} outside 0 to ${MAX_G_CO2E_PER_KWH} gCO2e/kWh.`,
-      )
+    this.warnDropped(
+      `quality|${source.id}|${zoneId}`,
+      whole.length - valid.length,
+      `from grid intensity source ${source.id} for zone ${zoneId} outside 0 to ${MAX_G_CO2E_PER_KWH} gCO2e/kWh.`,
+    )
     return valid
   }
 
+  private warnDropped(id: string, dropped: number, rest: string): void {
+    if (dropped > 0)
+      this.warnOnce(
+        id,
+        `Dropped ${dropped} point${dropped === 1 ? '' : 's'} ${rest}`,
+      )
+  }
+
+  /** Cleared every TTL, so session points are never kept longer. */
+  private sessionStore(): IntensityStore {
+    const nowMs = this.now().getTime()
+    if (nowMs >= this.sessionExpiresAt) {
+      this.session = new InMemoryIntensityStore()
+      this.sessionExpiresAt = nowMs + this.ttlMs
+    }
+    return this.session
+  }
+
+  private isFailing(sourceId: string, zoneId: string): boolean {
+    return (
+      (this.failedUntil.get(`${sourceId}|${zoneId}`) ?? 0) >
+      this.now().getTime()
+    )
+  }
+
   private async storedPoints(
+    store: IntensityStore,
     sourceId: string,
     zoneId: string,
     start: Date,
@@ -302,23 +368,28 @@ export class GridIntensityResolver implements IntensityResolver {
     granularity: Granularity,
   ): Promise<IntensityPoint[]> {
     try {
-      return await this.store.get(sourceId, zoneId, start, end, granularity)
+      return await store.get(sourceId, zoneId, start, end, granularity)
     } catch (error) {
       this.warnOnce(
-        'store',
-        `Grid intensity store unavailable: ${messageOf(error)}`,
+        `store|read|${sourceId}|${zoneId}`,
+        `Grid intensity store read failed for source ${sourceId}, zone ${zoneId}: ${messageOf(error)}`,
       )
       return []
     }
   }
 
-  private async storePoints(points: IntensityPoint[]): Promise<void> {
+  private async storePoints(
+    store: IntensityStore,
+    sourceId: string,
+    zoneId: string,
+    points: IntensityPoint[],
+  ): Promise<void> {
     try {
-      await this.store.put(points)
+      await store.put(points)
     } catch (error) {
       this.warnOnce(
-        'store',
-        `Grid intensity store unavailable: ${messageOf(error)}`,
+        `store|write|${sourceId}|${zoneId}`,
+        `Grid intensity store write failed for source ${sourceId}, zone ${zoneId}: ${messageOf(error)}`,
       )
     }
   }
@@ -337,9 +408,11 @@ export class GridIntensityResolver implements IntensityResolver {
     )
   }
 
+  /** At most once per id within the TTL. */
   private warnOnce(id: string, message: string): void {
-    if (this.warned.has(id)) return
-    this.warned.add(id)
+    const nowMs = this.now().getTime()
+    if ((this.warnedUntil.get(id) ?? 0) > nowMs) return
+    this.warnedUntil.set(id, nowMs + this.ttlMs)
     this.logger.warn(message)
   }
 }
@@ -365,6 +438,11 @@ const requestGranularity = (
     ? fineEnough[fineEnough.length - 1]
     : finestOf(available)
 }
+
+/** Whether the source can be asked for the whole period. */
+const isWithinWindow = (period: Period, capability: ZoneCapability): boolean =>
+  (!capability.earliest || period.start >= capability.earliest) &&
+  (!capability.latest || period.end <= capability.latest)
 
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
