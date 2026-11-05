@@ -68,6 +68,19 @@ export const addPeriod = (date: Date, granularity: Granularity): Date => {
   }
 }
 
+/**
+ * The granularity a usage period corresponds to, by length: up to an hour is
+ * 'hour', up to a day 'day', up to 31 days 'month', longer 'year'. A week is
+ * 'month'-sized: longer than a day, and coarser than daily intensity.
+ */
+export const usageGranularityOf = (start: Date, end: Date): Granularity => {
+  const ms = end.getTime() - start.getTime()
+  if (ms <= HOUR_MS) return 'hour'
+  if (ms <= DAY_MS) return 'day'
+  if (ms <= 31 * DAY_MS) return 'month'
+  return 'year'
+}
+
 export interface Period {
   start: Date
   end: Date

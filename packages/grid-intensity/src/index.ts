@@ -10,6 +10,7 @@ export {
   isAtLeastAsFine,
   periodsCovering,
   startOfPeriod,
+  usageGranularityOf,
 } from './granularity'
 export type { Period } from './granularity'
 export { requiresAcknowledgement } from './licence'
@@ -22,3 +23,19 @@ export type {
   StaticFactorTable,
   StaticFactorTables,
 } from './sources/StaticSource'
+export { missingPeriods, timeWeightedMean } from './coverage'
+export type { WeightedMean } from './coverage'
+export { InMemoryIntensityStore } from './stores/InMemoryIntensityStore'
+export {
+  GridIntensityResolver,
+  NoIntensityAvailableError,
+} from './GridIntensityResolver'
+export type {
+  GridIntensityResolverOptions,
+  ResolverLogger,
+} from './GridIntensityResolver'
+export {
+  resetDefaultResolver,
+  resolveEmissionsFactors,
+} from './resolveEmissionsFactors'
+export type { EmissionsFactorsResolution } from './resolveEmissionsFactors'

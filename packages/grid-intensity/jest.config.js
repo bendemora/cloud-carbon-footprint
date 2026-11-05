@@ -17,5 +17,8 @@ module.exports = {
     },
   },
   testPathIgnorePatterns: ['<rootDir>/src/__tests__/fixtures'],
-  coveragePathIgnorePatterns: ['<rootDir>/src/index.ts'],
+  coveragePathIgnorePatterns: [
+    '<rootDir>/src/index.ts',
+    '<rootDir>/src/__tests__/',
+  ],
 }

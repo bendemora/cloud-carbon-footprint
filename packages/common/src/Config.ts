@@ -91,6 +91,14 @@ export interface CCFConfig {
     CREDENTIALS?: string
   }
   ELECTRICITY_MAPS_TOKEN?: string
+  GRID_INTENSITY?: {
+    /** Source ids in priority order (GRID_INTENSITY_SOURCES). */
+    SOURCES?: string[]
+    /** Source ids the operator asserts they are licensed to use. */
+    LICENCE_ACKNOWLEDGEMENTS?: string[]
+    /** How long capability answers and failures are cached. */
+    CAPABILITY_TTL_HOURS?: number
+  }
 }
 
 export enum GroupBy {
@@ -141,6 +149,19 @@ const getAzureSubscriptions = () => {
   return process.env.AZURE_SUBSCRIPTIONS
     ? process.env.AZURE_SUBSCRIPTIONS
     : '[]'
+}
+
+const parseList = (value: string | undefined, fallback: string[]) => {
+  if (!value) return fallback
+  return value
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+}
+
+const parsePositiveNumber = (value: string | undefined, fallback: number) => {
+  const parsed = parseFloat(value)
+  return parsed > 0 ? parsed : fallback
 }
 
 // This function allows support for using Docker Secrets.
@@ -310,6 +331,17 @@ const getConfig = (): CCFConfig => ({
     CREDENTIALS: getEnvVar('MONGODB_CREDENTIALS') || '',
   },
   ELECTRICITY_MAPS_TOKEN: getEnvVar('ELECTRICITY_MAPS_TOKEN') || '',
+  GRID_INTENSITY: {
+    SOURCES: parseList(getEnvVar('GRID_INTENSITY_SOURCES'), ['static']),
+    LICENCE_ACKNOWLEDGEMENTS: parseList(
+      getEnvVar('GRID_INTENSITY_LICENCE_ACKNOWLEDGEMENTS'),
+      [],
+    ),
+    CAPABILITY_TTL_HOURS: parsePositiveNumber(
+      getEnvVar('GRID_INTENSITY_CAPABILITY_TTL_HOURS'),
+      24,
+    ),
+  },
 })
 
 export default getConfig

@@ -125,6 +125,55 @@ describe('Config', () => {
     })
   })
 
+  describe('GRID_INTENSITY', () => {
+    it('defaults to the static source, no acknowledgements and a 24 hour TTL', () => {
+      const config = getConfig()
+      expect(config.GRID_INTENSITY).toEqual({
+        SOURCES: ['static'],
+        LICENCE_ACKNOWLEDGEMENTS: [],
+        CAPABILITY_TTL_HOURS: 24,
+      })
+    })
+
+    it('reads comma-separated source and acknowledgement lists, trimming blanks', () => {
+      withEnvironment(
+        'GRID_INTENSITY_SOURCES',
+        ' electricitymaps, ,static ',
+        () => {
+          withEnvironment(
+            'GRID_INTENSITY_LICENCE_ACKNOWLEDGEMENTS',
+            'electricitymaps',
+            () => {
+              const config = getConfig()
+              expect(config.GRID_INTENSITY.SOURCES).toEqual([
+                'electricitymaps',
+                'static',
+              ])
+              expect(config.GRID_INTENSITY.LICENCE_ACKNOWLEDGEMENTS).toEqual([
+                'electricitymaps',
+              ])
+            },
+          )
+        },
+      )
+    })
+
+    it.each([
+      ['6', 6],
+      ['0.5', 0.5],
+      ['0', 24],
+      ['-3', 24],
+      ['soon', 24],
+    ])(
+      'reads GRID_INTENSITY_CAPABILITY_TTL_HOURS=%s as %s',
+      (value, expected) => {
+        withEnvironment('GRID_INTENSITY_CAPABILITY_TTL_HOURS', value, () => {
+          expect(getConfig().GRID_INTENSITY.CAPABILITY_TTL_HOURS).toBe(expected)
+        })
+      },
+    )
+  })
+
   describe('INCLUDE_ESTIMATES', () => {
     const cloudProviders = ['AWS', 'GCP', 'AZURE', 'ALI'] as const
     cloudProviders.forEach((provider) => {
