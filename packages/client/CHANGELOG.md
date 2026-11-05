@@ -1,5 +1,15 @@
 # @cloud-carbon-footprint/client
 
+## 5.0.1
+
+### Patch Changes
+
+- Updated dependencies [fd49e2b]
+- Updated dependencies [241cdd9]
+- Updated dependencies [be5c136]
+- Updated dependencies [fd33210]
+  - @cloud-carbon-footprint/common@3.0.0
+
 ## 5.0.0
 
 ### Major Changes

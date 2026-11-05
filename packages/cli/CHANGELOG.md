@@ -1,5 +1,21 @@
 # @cloud-carbon-footprint/cli
 
+## 2.0.1
+
+### Patch Changes
+
+- 6436ef8: The AWS, GCP and Azure packages resolve grid intensity through `resolveEmissionsFactors` from `@cloud-carbon-footprint/grid-intensity` instead of `getEmissionsFactors`. With the default configuration, estimates are unchanged. With `ELECTRICITY_MAPS_TOKEN` set, the existing Electricity Maps v3 lookup is still used, with one difference: recommendations and lookup tables use the previous UTC day instead of the current hour. A failed request still stops the run and nothing is written to the estimates cache, as before; Azure now stops too instead of leaving out the subscription. The CLI and the API's shutdown handler close the grid intensity store.
+- Updated dependencies [e53ad22]
+- Updated dependencies [fd49e2b]
+- Updated dependencies [241cdd9]
+- Updated dependencies [6436ef8]
+- Updated dependencies [be5c136]
+- Updated dependencies [fd33210]
+- Updated dependencies [552dd82]
+  - @cloud-carbon-footprint/grid-intensity@0.1.0
+  - @cloud-carbon-footprint/common@3.0.0
+  - @cloud-carbon-footprint/app@2.0.1
+
 ## 2.0.0
 
 ### Major Changes
