@@ -16,6 +16,7 @@ Read these before any non-trivial change:
 
 - Node 24 or later (CI runs 24.x). Yarn 4.12.0 is vendored at `.yarn/releases/yarn-4.12.0.cjs` and selected by `yarnPath` in `.yarnrc.yml`; any `yarn` shim (Corepack or classic) runs it. TypeScript 5.5.4 (pinned via `resolutions`), Lerna 8 with Nx, Jest 29 with ts-jest, ESLint 8/10, Prettier 3 (no semicolons, single quotes, trailing commas; see `.prettierrc.json`).
 - `.yarnrc.yml` sets `supportedArchitectures` so one `node_modules` works from macOS and Linux on arm64 (nx native binaries for both are fetched). Keep that setting.
+- `nx.json` exists only to stop Nx's workspace-root search at this checkout, so root commands and the hook in a worktree under `.claude/worktrees/` run that worktree's packages. Its other keys keep Nx as it was without the file (cache in `node_modules/.cache/nx`, no daemon, no lockfile analysis). Do not add `targetDefaults` without an ADR: Lerna then hands task ordering to Nx. See `.adr/0023-nx_json_workspace_root_anchor.md`.
 - `react-scripts` is a Yarn `patch:` dependency (`.yarn/patches/react-scripts-npm-5.0.1-d06bd2d5ad.patch`) so the client dev server starts on machines without an RFC 1918 address. If you change the patch, update its checksum in `.talismanrc`.
 
 ## Commands (run from the repository root)

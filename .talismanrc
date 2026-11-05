@@ -1,4 +1,6 @@
 fileignoreconfig:
+- filename: .adr/0023-nx_json_workspace_root_anchor.md
+  checksum: 6187ac777ddefb1ad5eb781bb58a5e3c984f98a225c9f0645ff7b87b313c57e6
 - filename: .changeset/big-experts-kick.md
   checksum: 74d451296b12b20492767a90f35ec464016a6eca3593c13a672b40d0fd8f8b06
 - filename: .changeset/breezy-singers-own.md
@@ -46,7 +48,7 @@ fileignoreconfig:
 - filename: .yarn/patches/react-scripts-npm-5.0.1-d06bd2d5ad.patch
   checksum: a824034505ded5de43b416ca063471f1a5c1cacb323017c362e38789e4464214
 - filename: CLAUDE.md
-  checksum: abe22db0ed67d0bc040e33823e915269b9725ee9e59f692a4b7a0306e406b42a
+  checksum: d939548941de992154f145ceac2d0502ff84e8adcfb4541467183b3ae088d07d
 - filename: CONTRIBUTING.md
   checksum: 454a26b0f80e1406f9f80ab12bd11183ebbf54a8b387c8667af258eeafb89ba7
 - filename: README.md

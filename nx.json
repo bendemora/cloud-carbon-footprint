@@ -1,0 +1,13 @@
+{
+  "$schema": "./node_modules/nx/schemas/nx-schema.json",
+  "cacheDirectory": "node_modules/.cache/nx",
+  "useDaemonProcess": false,
+  "pluginsConfig": {
+    "@nx/js": {
+      "analyzePackageJson": true,
+      "analyzeSourceFiles": false,
+      "analyzeLockfile": false,
+      "projectsAffectedByDependencyUpdates": "all"
+    }
+  }
+}
