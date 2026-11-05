@@ -21,7 +21,9 @@ import {
   buildAccountFilter,
 } from '@cloud-carbon-footprint/common'
 import {
+  EmissionsFactorsResolution,
   lastFullUtcDay,
+  Period,
   resolveEmissionsFactors,
   usagePeriod,
 } from '@cloud-carbon-footprint/grid-intensity'
@@ -115,19 +117,11 @@ export default class BillingExportTable {
       usageRow.tags = this.rawTagsToTagCollection(usageRow)
       const billingExportRow = new BillingExportRow(usageRow)
 
-      const period = usagePeriod(billingExportRow.timestamp, grouping)
-      const { factors: emissionsFactors } = await resolveEmissionsFactors(
-        'GCP',
-        billingExportRow.region,
-        period.start,
-        period.end,
-        { factors: getGCPEmissionsFactors },
-        {
-          legacyElectricityMapsZones:
-            GCP_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-          logger: this.billingExportTableLogger,
-        },
-      )
+      const { factors: emissionsFactors, provenance } =
+        await this.resolveFactors(
+          billingExportRow.region,
+          usagePeriod(billingExportRow.timestamp, grouping),
+        )
 
       const footprintEstimate = this.getFootprintEstimateFromUsageRow(
         billingExportRow,
@@ -138,24 +132,31 @@ export default class BillingExportTable {
         appendOrAccumulateEstimatesByDay(
           results,
           billingExportRow,
-          footprintEstimate,
+          { ...footprintEstimate, provenance },
           grouping,
           tagNames,
         )
     }
 
     if (results.length > 0) {
-      unknownRows.map((rowData: BillingExportRow) => {
-        const footprintEstimate = this.getEstimateForUnknownUsage(rowData)
+      for (const rowData of unknownRows) {
+        const { factors, provenance } = await this.resolveFactors(
+          rowData.region,
+          usagePeriod(rowData.timestamp, grouping),
+        )
+        const footprintEstimate = this.getEstimateForUnknownUsage(
+          rowData,
+          factors,
+        )
         if (footprintEstimate)
           appendOrAccumulateEstimatesByDay(
             results,
             rowData,
-            footprintEstimate,
+            { ...footprintEstimate, provenance },
             grouping,
             tagNames,
           )
-      })
+      }
     }
     return results
   }
@@ -190,18 +191,9 @@ export default class BillingExportTable {
         billingExportRow.vCpuHours = instancevCpu * billingExportRow.vCpuHours
       }
 
-      const period = lastFullUtcDay()
-      const { factors: emissionsFactors } = await resolveEmissionsFactors(
-        'GCP',
+      const { factors: emissionsFactors } = await this.resolveFactors(
         billingExportRow.region,
-        period.start,
-        period.end,
-        { factors: getGCPEmissionsFactors },
-        {
-          legacyElectricityMapsZones:
-            GCP_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-          logger: this.billingExportTableLogger,
-        },
+        lastFullUtcDay(),
       )
 
       const footprintEstimate = this.getFootprintEstimateFromUsageRow(
@@ -221,9 +213,15 @@ export default class BillingExportTable {
     }
 
     if (results.length > 0) {
-      unknownRows.map((billingExportRow: BillingExportRow) => {
-        const footprintEstimate =
-          this.getEstimateForUnknownUsage(billingExportRow)
+      for (const billingExportRow of unknownRows) {
+        const { factors } = await this.resolveFactors(
+          billingExportRow.region,
+          lastFullUtcDay(),
+        )
+        const footprintEstimate = this.getEstimateForUnknownUsage(
+          billingExportRow,
+          factors,
+        )
         if (footprintEstimate)
           results.push({
             serviceName: billingExportRow.serviceName,
@@ -233,9 +231,28 @@ export default class BillingExportTable {
             kilowattHours: footprintEstimate.kilowattHours,
             co2e: footprintEstimate.co2e,
           })
-      })
+      }
     }
     return results
+  }
+
+  /** Grid intensity for a region over a period, with provenance. */
+  private resolveFactors(
+    region: string,
+    period: Period,
+  ): Promise<EmissionsFactorsResolution> {
+    return resolveEmissionsFactors(
+      'GCP',
+      region,
+      period.start,
+      period.end,
+      { factors: getGCPEmissionsFactors },
+      {
+        legacyElectricityMapsZones:
+          GCP_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
+        logger: this.billingExportTableLogger,
+      },
+    )
   }
 
   private getFootprintEstimateFromUsageRow(
@@ -630,6 +647,7 @@ export default class BillingExportTable {
 
   private getEstimateForUnknownUsage(
     rowData: BillingExportRow,
+    emissionsFactors: CloudConstantsEmissionsFactors,
   ): FootprintEstimate {
     const unknownUsage: UnknownUsage = {
       timestamp: rowData.timestamp,
@@ -645,7 +663,7 @@ export default class BillingExportTable {
     return this.unknownEstimator.estimate(
       [unknownUsage],
       rowData.region,
-      getGCPEmissionsFactors(),
+      emissionsFactors,
       unknownConstants,
     )[0]
   }

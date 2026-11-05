@@ -9,14 +9,18 @@ import { BillingDataRow, CloudConstantsEmissionsFactors } from '.'
 import {
   GroupBy,
   getPeriodEndDate,
+  Provenance,
   TagCollection,
 } from '@cloud-carbon-footprint/common'
+import { mergeProvenance } from './provenance'
 
 export default interface FootprintEstimate {
   timestamp: Date
   kilowattHours: number
   co2e: number
   usesAverageCPUConstant?: boolean
+  /** Where the grid intensity behind co2e came from. */
+  provenance?: Provenance
 }
 
 export type KilowattHourTotals = {
@@ -87,6 +91,7 @@ export interface MutableServiceEstimate {
   region: string
   usesAverageCPUConstant: boolean
   tags?: TagCollection
+  provenance?: Provenance
 }
 
 export const accumulateKilowattHours = (
@@ -190,6 +195,9 @@ export const appendOrAccumulateEstimatesByDay = (
     region: rowData.region,
     cost: rowData.cost,
     tags: rowData.tags,
+    ...(footprintEstimate.provenance && {
+      provenance: footprintEstimate.provenance,
+    }),
   }
 
   const dayFoundInEstimate = results.find(
@@ -207,6 +215,16 @@ export const appendOrAccumulateEstimatesByDay = (
       })
 
     if (estimateFoundWithSameRegionAndServiceAccountAndTags) {
+      const provenance = mergeProvenance(
+        estimateFoundWithSameRegionAndServiceAccountAndTags.provenance,
+        estimateFoundWithSameRegionAndServiceAccountAndTags.kilowattHours,
+        serviceEstimate.provenance,
+        serviceEstimate.kilowattHours,
+      )
+      if (provenance)
+        estimateFoundWithSameRegionAndServiceAccountAndTags.provenance =
+          provenance
+
       estimateFoundWithSameRegionAndServiceAccountAndTags.kilowattHours +=
         serviceEstimate.kilowattHours
 

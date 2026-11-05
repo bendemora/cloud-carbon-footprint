@@ -28,7 +28,7 @@ import {
 } from './sources/StaticSource'
 import { deriveQualityTier, STATIC_SOURCE_ID } from './qualityTier'
 import { createIntensityStore } from './stores/createIntensityStore'
-import { gramsToTonnes } from './units'
+import { gramsToTonnes, tonnesToGrams } from './units'
 import {
   CloudProvider,
   GridIntensitySource,
@@ -204,6 +204,7 @@ const legacyElectricityMapsLookup = async (
         intensityGranularity: 'hour',
         usageGranularity,
       }),
+      gCO2ePerKWh: tonnesToGrams(factors[region]),
       modelVersion: 'unversioned',
     },
   }
@@ -270,8 +271,13 @@ export const resolveEmissionsFactors = async (
       provider,
       region,
     )
+    const factors = factorsOf(staticTable)
+    // The factor estimateCo2 will apply: the region's, else the table's Unknown.
+    const applied = Object.hasOwn(factors, region)
+      ? factors[region]
+      : factors.Unknown
     return {
-      factors: factorsOf(staticTable),
+      factors,
       provenance: {
         sourceId: STATIC_SOURCE_ID,
         zoneId: zoneId ?? `${provider.toLowerCase()}:${region}`,
@@ -281,6 +287,7 @@ export const resolveEmissionsFactors = async (
         isEstimated: zoneId === null,
         licenceId: 'open-attribution',
         qualityTier: 'D',
+        gCO2ePerKWh: applied === undefined ? NaN : tonnesToGrams(applied),
         modelVersion: 'unversioned',
       },
     }
