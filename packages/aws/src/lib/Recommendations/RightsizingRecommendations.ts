@@ -8,17 +8,19 @@ import {
   RightsizingType,
 } from '@aws-sdk/client-cost-explorer'
 import {
-  CloudConstantsEmissionsFactors,
   ComputeEstimator,
   ICloudRecommendationsService,
   MemoryEstimator,
 } from '@cloud-carbon-footprint/core'
 import {
   AWS_RECOMMENDATIONS_TARGETS,
-  getEmissionsFactors,
   Logger,
   RecommendationResult,
 } from '@cloud-carbon-footprint/common'
+import {
+  lastFullUtcDay,
+  resolveEmissionsFactors,
+} from '@cloud-carbon-footprint/grid-intensity'
 import { ServiceWrapper } from '../ServiceWrapper'
 import AWSComputeEstimatesBuilder from '../AWSComputeEstimatesBuilder'
 import AWSMemoryEstimatesBuilder from '../AWSMemoryEstimatesBuilder'
@@ -158,15 +160,19 @@ export default class RightsizingRecommendations implements ICloudRecommendations
   private async getFootprintEstimates(
     rightsizingRecommendation: RightsizingRecommendation,
   ) {
-    const dateTime = new Date().toISOString()
-    const emissionsFactors: CloudConstantsEmissionsFactors =
-      await getEmissionsFactors(
-        rightsizingRecommendation.region,
-        dateTime,
-        AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
-        AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-        this.recommendationsLogger,
-      )
+    const period = lastFullUtcDay()
+    const { factors: emissionsFactors } = await resolveEmissionsFactors(
+      'AWS',
+      rightsizingRecommendation.region,
+      period.start,
+      period.end,
+      { factors: AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH },
+      {
+        legacyElectricityMapsZones:
+          AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
+        logger: this.recommendationsLogger,
+      },
+    )
     const computeFootprint = new AWSComputeEstimatesBuilder(
       rightsizingRecommendation,
       this.computeEstimator,

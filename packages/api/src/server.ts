@@ -13,6 +13,7 @@ import cors, { CorsOptions } from 'cors'
 import { createRouter } from './api'
 import { Logger, configLoader } from '@cloud-carbon-footprint/common'
 import { MongoDbCacheManager } from '@cloud-carbon-footprint/app'
+import { shutdownDefaultResolver } from '@cloud-carbon-footprint/grid-intensity'
 import swaggerDocs from './utils/swagger'
 import auth from './utils/auth'
 
@@ -64,6 +65,7 @@ if (process.env.NODE_ENV === 'production') {
 
 // Instructions for graceful shutdown
 process.on('SIGINT', async () => {
+  await shutdownDefaultResolver()
   if (configLoader()?.CACHE_MODE === 'MONGODB') {
     await MongoDbCacheManager.mongoClient.close()
     serverLogger.info('\nMongoDB connection closed')

@@ -15,7 +15,6 @@ We provide more detailed information in our [methodology](https://www.cloudcarbo
 CCF comes with a set of default emissions factors that are sourced from publicly available data sources such as government agencies, energy organizations, and research institutions. These default factors provide a reasonable estimate of carbon intensity for different energy sources and regions and are used when no specific configuration is provided.
 For reference, we have the default grid emissions factors located [here](https://www.cloudcarbonfootprint.org/docs/methodology#appendix-v-grid-emissions-factors) in the appendix of the Methodology.
 
-
 ### Electricity Maps API Configuration
 
 CCF can be configured to use the Electricity Maps API to obtain carbon intensity factors per region across the supported cloud providers.
@@ -25,6 +24,8 @@ How the current integration behaves (this is being replaced; see `docs/design/20
 - For each usage row, CCF calls the `carbon-intensity/past` endpoint with the start of the row's usage period (midnight UTC of the day, or the first day of the period for coarser groupings). That endpoint returns the intensity for a single hour, so the value applied to the whole period is the intensity of that one hour, not an average over the day or month.
 - Values are memoised in memory per zone and period start for the lifetime of the process; nothing is persisted between runs.
 - The cloud-region to Electricity Maps zone mapping is maintained in each provider package.
+- Recommendations and lookup tables, which have no usage period of their own, use the intensity at midnight UTC at the start of the previous day.
+- If a request to Electricity Maps fails, CCF logs one warning for the region and uses the default emissions factors for it; the run continues.
 
 Here's how to configure CCF to use the Electricity Maps API:
 
@@ -34,14 +35,13 @@ Here's how to configure CCF to use the Electricity Maps API:
 
 3. **API Key Configuration**: In the configuration file, create a new environment variable called `ELECTRICITY_MAPS_TOKEN`, and set your token as the value. The name must be spelled exactly as shown; the code reads `ELECTRICITY_MAPS_TOKEN`.
 
-
    ```yaml
    # Example CCF Configuration File
-   
-     # Configuration for Electricity Maps API
-     ELECTRICITY_MAPS_TOKEN=your-token-here 
+
+   # Configuration for Electricity Maps API
+   ELECTRICITY_MAPS_TOKEN=your-token-here
    ```
-    
+
 4. **Run CCF**: Once you have configured CCF to use the Electricity Maps API, you can run the tool as you normally would. CCF will now use the Electricity Maps API to obtain carbon intensity factors for each region.
 
 ### Additional Notes

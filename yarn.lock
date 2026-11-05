@@ -4306,6 +4306,7 @@ __metadata:
   dependencies:
     "@cloud-carbon-footprint/app": "npm:^2.0.0"
     "@cloud-carbon-footprint/common": "npm:^2.0.0"
+    "@cloud-carbon-footprint/grid-intensity": "npm:^0.0.0"
     "@types/cors": "npm:^2.8.12"
     "@types/express": "npm:^4.17.12"
     "@types/jest": "npm:^29.5.12"
@@ -4387,6 +4388,7 @@ __metadata:
     "@aws-sdk/credential-providers": "npm:^3.991.0"
     "@cloud-carbon-footprint/common": "npm:^2.0.0"
     "@cloud-carbon-footprint/core": "npm:^1.0.0"
+    "@cloud-carbon-footprint/grid-intensity": "npm:^0.0.0"
     "@types/jest": "npm:^29.5.12"
     "@types/jest-when": "npm:^3.5.5"
     "@types/node": "npm:^24.0.0"
@@ -4427,6 +4429,7 @@ __metadata:
     "@azure/ms-rest-nodeauth": "npm:^3.1.1"
     "@cloud-carbon-footprint/common": "npm:^2.0.0"
     "@cloud-carbon-footprint/core": "npm:^1.0.0"
+    "@cloud-carbon-footprint/grid-intensity": "npm:^0.0.0"
     "@google-cloud/secret-manager": "npm:^6.1.1"
     "@types/jest": "npm:^29.5.12"
     "@types/jest-when": "npm:^3.5.5"
@@ -4465,6 +4468,7 @@ __metadata:
     "@azure/arm-resources-subscriptions": "npm:^2.0.2"
     "@cloud-carbon-footprint/app": "npm:2.0.0"
     "@cloud-carbon-footprint/common": "npm:^2.0.0"
+    "@cloud-carbon-footprint/grid-intensity": "npm:^0.0.0"
     "@types/cli-table": "npm:^0.3.0"
     "@types/jest": "npm:^29.5.12"
     "@types/jest-when": "npm:^3.5.5"
@@ -4663,6 +4667,7 @@ __metadata:
   dependencies:
     "@cloud-carbon-footprint/common": "npm:^2.0.0"
     "@cloud-carbon-footprint/core": "npm:^1.0.0"
+    "@cloud-carbon-footprint/grid-intensity": "npm:^0.0.0"
     "@google-cloud/bigquery": "npm:^8.1.1"
     "@google-cloud/compute": "npm:^6.7.0"
     "@google-cloud/monitoring": "npm:^5.3.1"
@@ -4694,7 +4699,7 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@cloud-carbon-footprint/grid-intensity@workspace:packages/grid-intensity":
+"@cloud-carbon-footprint/grid-intensity@npm:^0.0.0, @cloud-carbon-footprint/grid-intensity@workspace:packages/grid-intensity":
   version: 0.0.0-use.local
   resolution: "@cloud-carbon-footprint/grid-intensity@workspace:packages/grid-intensity"
   dependencies:
