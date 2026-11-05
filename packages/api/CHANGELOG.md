@@ -1,5 +1,23 @@
 # @cloud-carbon-footprint/api
 
+## 2.0.1
+
+### Patch Changes
+
+- 6436ef8: The AWS, GCP and Azure packages resolve grid intensity through `resolveEmissionsFactors` from `@cloud-carbon-footprint/grid-intensity` instead of `getEmissionsFactors`. With the default configuration, estimates are unchanged. With `ELECTRICITY_MAPS_TOKEN` set, the existing Electricity Maps v3 lookup is still used, with one difference: recommendations and lookup tables use the previous UTC day instead of the current hour. A failed request still stops the run and nothing is written to the estimates cache, as before; Azure now stops too instead of leaving out the subscription. The CLI and the API's shutdown handler close the grid intensity store.
+- be5c136: Fixes from a review of the Phase 1 grid intensity work. With `ELECTRICITY_MAPS_TOKEN` set, an invalid token (HTTP 401 with `Invalid auth-token`) or an Electricity Maps server error (HTTP 5xx) now fails the request like a network error, instead of falling back to the default factors row by row and caching those rows. A 401 for a zone or endpoint the token has no access to still falls back for that zone, as before; the error is an `ElectricityMapsRequestError`, and Azure no longer skips the subscription when it sees one, so the run stops and nothing partial is cached. A region whose static factor is 0 (GCP `europe-north2` with `GCP_USE_CARBON_FREE_ENERGY_PERCENTAGE=true`) now gets provenance for the Unknown zone and factor that `estimateCo2` applies, instead of 0 gCO2e/kWh; the estimate itself is unchanged. The static factors are no longer checked against the 0 to 1500 gCO2e/kWh bounds meant for fetched data, which logged a misleading "Dropped 1 point" warning for GCP multi-regions; estimates are unchanged. With `GRID_INTENSITY_STORE=MONGODB`, a malformed `MONGODB_URI` or a missing `MONGODB_CREDENTIALS` file now logs a warning, without the user name or password from `MONGODB_URI`, and keeps points in memory instead of failing every AWS, GCP and Azure estimate. When rows with different provenance are merged into one service estimate, the merged row takes the more restrictive of their licences. The API's deployment package now includes `grid-intensity` instead of expecting it from npm.
+- 552dd82: Large estimate sets no longer fail on output size, which provenance on every row had made about twice as likely. The MongoDB cache now returns stored rows one document each and groups them by timestamp in Node instead of with `$group`, so the rows of one timestamp no longer have to fit in one 16 MiB MongoDB document (with provenance that capped a page at about 34,000 rows of one day, against about 71,000 before). When loading estimates from MongoDB fails, `MongoDbCacheManager.getEstimates` now throws and the API answers HTTP 500, instead of logging a warning and answering 200 with an empty list. The `/footprint` response is streamed one service estimate at a time instead of built with `res.json`, so it is no longer limited by the longest string Node can hold (about 512 MiB, about 1.1 million rows with provenance); the response text is unchanged, and it is now sent with chunked transfer encoding and without an ETag. LOCAL and GCS cache writes are gathered in windows of about 16 MiB instead of 100 estimation results, so they no longer fail when 100 periods together pass that string limit; one period's estimates must still fit in one string, as each is one line of the cache file. Estimates themselves are unchanged.
+- Updated dependencies [e53ad22]
+- Updated dependencies [fd49e2b]
+- Updated dependencies [241cdd9]
+- Updated dependencies [6436ef8]
+- Updated dependencies [be5c136]
+- Updated dependencies [fd33210]
+- Updated dependencies [552dd82]
+  - @cloud-carbon-footprint/grid-intensity@0.1.0
+  - @cloud-carbon-footprint/common@3.0.0
+  - @cloud-carbon-footprint/app@2.0.1
+
 ## 2.0.0
 
 ### Major Changes
