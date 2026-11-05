@@ -277,6 +277,10 @@ screenshots
 # Grid intensity store (may hold licensed data; never commit)
 .ccf/
 
+# Nx workspace data (project graph cache). Nx keeps it here, not in
+# node_modules/.cache, once nx.json exists. See .adr/0023.
+.nx/
+
 #Create App
 packages/create-app/ccf-app
 
