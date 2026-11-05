@@ -209,13 +209,10 @@ export class GridIntensityResolver implements IntensityResolver {
       capability.granularities,
       usageGranularity,
     )
-    const stored = await this.storedPoints(
-      source.id,
-      zoneId,
-      start,
-      end,
-      granularity,
-    )
+    const persist = source.persist !== false
+    const stored = persist
+      ? await this.storedPoints(source.id, zoneId, start, end, granularity)
+      : []
     const fetched: IntensityPoint[] = []
     for (const range of missingPeriods(
       periodsCovering(start, end, granularity),
@@ -234,7 +231,7 @@ export class GridIntensityResolver implements IntensityResolver {
         break
       }
     }
-    if (fetched.length && capability.licence.retention !== 'session')
+    if (persist && fetched.length && capability.licence.retention !== 'session')
       await this.storePoints(fetched)
 
     const byStart = new Map<number, IntensityPoint>()

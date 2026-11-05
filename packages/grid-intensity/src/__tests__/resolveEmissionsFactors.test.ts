@@ -8,18 +8,28 @@ import { GridIntensityResolver } from '../GridIntensityResolver'
 import {
   resetDefaultResolver,
   resolveEmissionsFactors,
+  shutdownDefaultResolver,
 } from '../resolveEmissionsFactors'
+import { MongoDbIntensityStore } from '../stores/MongoDbIntensityStore'
 import { StaticFactorTable } from '../sources/StaticSource'
 import { FakeSource } from './fixtures/FakeSource'
 
 const mockWarn = jest.fn()
+jest.mock('mongodb', () => ({
+  MongoClient: jest.fn(),
+  ServerApiVersion: { v1: '1' },
+}))
 jest.mock('@cloud-carbon-footprint/common', () => ({
   configLoader: jest.fn(),
   Logger: jest.fn().mockImplementation(() => ({ warn: mockWarn })),
 }))
 
-const mockConfig = (gridIntensity: Record<string, unknown> = {}) =>
+const mockConfig = (
+  gridIntensity: Record<string, unknown> = {},
+  mongodb: Record<string, unknown> = {},
+) =>
   (configLoader as jest.Mock).mockReturnValue({
+    MONGODB: mongodb,
     GRID_INTENSITY: {
       SOURCES: ['static'],
       LICENCE_ACKNOWLEDGEMENTS: [],
@@ -164,6 +174,33 @@ describe('resolveEmissionsFactors', () => {
         awsTable,
       )
       expect(result.provenance.zoneId).toBe('aws:eu-west-2')
+    })
+  })
+
+  describe('shutdownDefaultResolver', () => {
+    it('closes the store of the default resolver and discards it', async () => {
+      mockConfig({ STORE: 'MONGODB' }, { URI: 'mongodb://db:27017' })
+      const close = jest
+        .spyOn(MongoDbIntensityStore.prototype, 'close')
+        .mockResolvedValue(undefined)
+      await resolveEmissionsFactors('AWS', 'eu-west-2', START, END, awsTable)
+      await shutdownDefaultResolver()
+      expect(close).toHaveBeenCalledTimes(1)
+      await resolveEmissionsFactors('AWS', 'eu-west-2', START, END, awsTable)
+      expect(configLoader).toHaveBeenCalledTimes(2)
+      close.mockRestore()
+    })
+
+    it('does nothing when no default resolver was built', async () => {
+      await expect(shutdownDefaultResolver()).resolves.toBeUndefined()
+    })
+
+    it('discards a default resolver whose store has nothing to close', async () => {
+      mockConfig({ STORE: 'LOCAL' })
+      await resolveEmissionsFactors('AWS', 'eu-west-2', START, END, awsTable)
+      await shutdownDefaultResolver()
+      await resolveEmissionsFactors('AWS', 'eu-west-2', START, END, awsTable)
+      expect(configLoader).toHaveBeenCalledTimes(2)
     })
   })
 

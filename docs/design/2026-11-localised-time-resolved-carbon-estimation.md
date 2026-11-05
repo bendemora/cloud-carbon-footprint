@@ -305,6 +305,13 @@ Tier is per service estimate row; a report can be summarised by the share of kWh
 
 Store backends mirror CCF's cache modes: `LOCAL` (one JSON file per source, zone and calendar month under `GRID_INTENSITY_STORE_PATH`, default `.ccf/grid-intensity/`) and `MONGODB` (collection `grid-intensity-points`, reusing `MONGODB_URI`). No native dependencies: this keeps the multi-architecture install (PR #1) simple. A `GCS` backend follows the existing `GoogleCloudCacheManager` pattern if needed.
 
+Implementation notes (Phase 1):
+
+- LOCAL files are `<source>/<zone>/<YYYY-MM>.<granularity>.json` (annual points: `<YYYY>.year.json`), with source and zone ids percent-encoded, dots included, so no id can name a path outside the store. Writes go to a temporary file and are renamed into place. A corrupt or unknown-version file fails the read with its path; the resolver then warns once and carries on without the store.
+- MONGODB uses the `ccf` database (the one the estimates cache uses), one document per point, unique on source, zone, granularity and period start. It connects on first use and does not retry a failed connection within a run. `shutdownDefaultResolver()` closes it; the CLI and API call it next to the estimates cache's close once the wiring lands.
+- `GRID_INTENSITY_STORE=MONGODB` without `MONGODB_URI`, or an unknown store mode, warns and keeps points in memory for the run.
+- The static source is never stored (`persist = false` on the source): its values come from code, and stored copies would go stale when the tables change.
+
 ## 7. Hourly usage
 
 Add `hour` to `GroupBy`. Changes, in dependency order:
