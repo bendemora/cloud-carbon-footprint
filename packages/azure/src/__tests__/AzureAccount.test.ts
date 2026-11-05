@@ -4,11 +4,13 @@
 import {
   EstimationResult,
   GroupBy,
+  Logger,
   LookupTableInput,
   LookupTableOutput,
   RecommendationResult,
   configLoader,
 } from '@cloud-carbon-footprint/common'
+import { ElectricityMapsRequestError } from '@cloud-carbon-footprint/grid-intensity'
 
 import AzureAccount from '../application/AzureAccount'
 import AzureCredentialsProvider from '../application/AzureCredentialsProvider'
@@ -152,6 +154,70 @@ describe('Azure Account', () => {
         grouping,
       )
       expect(promiseSpy).toBeCalledTimes(1)
+    })
+
+    describe('when a subscription fails', () => {
+      const subscriptionEstimates = (): EstimationResult[] => [
+        {
+          timestamp: startDate,
+          serviceEstimates: [],
+          periodStartDate: startDate,
+          periodEndDate: endDate,
+          groupBy: grouping,
+        },
+      ]
+
+      beforeEach(() => {
+        ;(createCredentialsSpy as jest.Mock).mockResolvedValue({
+          clientId: 'test-client-id',
+          secret: 'test-client-secret',
+          domain: 'test-tenant-id',
+        })
+        mockListSubscriptions.list.mockReturnValue([
+          { subscriptionId: 'sub-1' },
+          { subscriptionId: 'sub-2' },
+        ])
+      })
+
+      it('still skips that subscription, with a warning, for other errors', async () => {
+        const warn = jest.spyOn(Logger.prototype, 'warn')
+        ;(getEstimatesSpy as jest.Mock)
+          .mockRejectedValueOnce(new Error('AuthorizationFailed'))
+          .mockResolvedValueOnce(subscriptionEstimates())
+        const azureAccount = new AzureAccount()
+        await azureAccount.initializeAccount()
+        const results = await azureAccount.getDataFromConsumptionManagement(
+          startDate,
+          endDate,
+          grouping,
+          [],
+        )
+        expect(results).toEqual(subscriptionEstimates())
+        expect(warn).toHaveBeenCalledWith(
+          'Unable to get estimate data for Azure subscription sub-1: AuthorizationFailed',
+        )
+        warn.mockRestore()
+      })
+
+      it('stops instead of skipping it when an Electricity Maps request failed, so the estimates cache keeps nothing partial', async () => {
+        ;(getEstimatesSpy as jest.Mock)
+          .mockRejectedValueOnce(
+            new ElectricityMapsRequestError(
+              'Failed to get data from Electricity Maps. Reason: timeout.',
+            ),
+          )
+          .mockResolvedValueOnce(subscriptionEstimates())
+        const azureAccount = new AzureAccount()
+        await azureAccount.initializeAccount()
+        await expect(
+          azureAccount.getDataFromConsumptionManagement(
+            startDate,
+            endDate,
+            grouping,
+            [],
+          ),
+        ).rejects.toThrow('Failed to get data from Electricity Maps.')
+      })
     })
 
     it('returns empty array if no subscriptions are found', async () => {

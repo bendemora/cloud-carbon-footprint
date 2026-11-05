@@ -89,6 +89,16 @@ export const getElectricityMapsData = async (
         'auth-token': configLoader().ELECTRICITY_MAPS_TOKEN,
       },
     })
+    // An invalid or expired token, or a server error, would be answered the
+    // same way for every zone and date: fail rather than fall back to the
+    // default factors row by row. Other answers without a value (a zone the
+    // token cannot access) still fall back for that zone.
+    if (res.status === 401 || res.status >= 500) {
+      const body = (await res.text()).slice(0, 200)
+      throw new Error(
+        `Electricity Maps answered HTTP ${res.status}${body ? `: ${body}` : ''}`,
+      )
+    }
     return await res.json()
   } catch (e) {
     throw new Error(`Electricity Maps request failed. Reason: ${e.message}.`)

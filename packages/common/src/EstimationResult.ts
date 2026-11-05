@@ -27,7 +27,12 @@ export interface ServiceData {
   serviceName: string
   region: string
   tags?: TagCollection
-  /** Where the grid intensity came from. Absent on rows estimated before it was recorded. */
+  /**
+   * Where the grid intensity came from. Set on AWS, GCP and Azure estimates
+   * from billing data. Absent on estimates from the cloud usage APIs (billing
+   * data turned off), on rows cached before it was recorded, and on Alibaba
+   * Cloud and on-premise rows.
+   */
   provenance?: Provenance
 }
 

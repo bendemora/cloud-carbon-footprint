@@ -28,6 +28,10 @@ jobs:
         with:
           # This makes Actions fetch all Git history so that Changesets can generate changelogs with the correct commits
           fetch-depth: 0
+          # Keep the write token out of .git/config, where the dependency
+          # install scripts in the next step could read it. changesets/action
+          # writes its own credentials from GITHUB_TOKEN before it pushes.
+          persist-credentials: false
 
       - name: Setup Node.js 24.x
         uses: actions/setup-node@v4

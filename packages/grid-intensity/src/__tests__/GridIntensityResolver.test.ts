@@ -516,6 +516,22 @@ describe('GridIntensityResolver', () => {
       expect(logger.warn.mock.calls[0][0]).toContain('Dropped 1 point from')
     })
 
+    it('does not bound-check a source whose values come from code', async () => {
+      // CCF's GCP multi-region factors are sums across data centres
+      // (us: 3810 gCO2e/kWh), which the fetched-data bound would reject.
+      const source = new StaticSource({ GCP: { factors: { us: 0.00381 } } })
+      const { resolver, logger } = createResolver({ sources: [source] })
+      const result = await resolver.resolve('GCP', 'us', DAY_START, DAY_END)
+      expect(result.gCO2ePerKWh).toBe(3810)
+      expect(result.provenance).toMatchObject({
+        sourceId: 'static',
+        zoneId: 'gcp:us',
+        isEstimated: false,
+        qualityTier: 'D',
+      })
+      expect(logger.warn).not.toHaveBeenCalled()
+    })
+
     it('counts several dropped points in the warning', async () => {
       const live = new FakeSource({
         granularities: ['hour'],
