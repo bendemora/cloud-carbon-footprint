@@ -53,7 +53,8 @@ export interface Provenance {
    * kilowattHours includes embodied emissions converted to energy at this
    * same factor, so for a row with a co2e value, co2e (tonnes) is
    * kilowattHours x gCO2ePerKWh / 1e6; it is not an intensity of operational
-   * energy alone.
+   * energy alone. The exception is a factor of 0: embodied emissions are
+   * then in co2e but not in kilowattHours.
    */
   gCO2ePerKWh: number
   /** CCF energy model version (section 9). */
