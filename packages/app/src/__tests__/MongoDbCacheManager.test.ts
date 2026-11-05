@@ -169,9 +169,19 @@ const staticProvenance = {
   modelVersion: 'unversioned',
 }
 
+/*
+ * Ids that increase in creation order, as loadEstimates sorts rows by
+ * timestamp and _id. new ObjectId() does not guarantee that: its counter
+ * starts at random and wraps at 0xffffff (bson objectid.js), so ids made in
+ * the same second after a wrap sort before earlier ones.
+ */
+let rowSequence = 0
+const nextRowId = () =>
+  new ObjectId((++rowSequence).toString(16).padStart(24, '0'))
+
 /** A row as setEstimates stores it: a service estimate plus timestamp and groupBy. */
 const storedRow = (timestamp: Date, index: number): Doc => ({
-  _id: new ObjectId(),
+  _id: nextRowId(),
   cloudProvider: 'AWS',
   kilowattHours: 0.0123456789012,
   co2e: 0.00000412345678901,
