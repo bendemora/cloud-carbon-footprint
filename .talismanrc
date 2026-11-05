@@ -45,6 +45,8 @@ fileignoreconfig:
   checksum: 3bfb33cac24525b03528d71814b90abc6e0bf7cdcd9e95f6aae8d342d3666268
 - filename: .yarn/patches/react-scripts-npm-5.0.1-d06bd2d5ad.patch
   checksum: a824034505ded5de43b416ca063471f1a5c1cacb323017c362e38789e4464214
+- filename: CLAUDE.md
+  checksum: abe22db0ed67d0bc040e33823e915269b9725ee9e59f692a4b7a0306e406b42a
 - filename: CONTRIBUTING.md
   checksum: 454a26b0f80e1406f9f80ab12bd11183ebbf54a8b387c8667af258eeafb89ba7
 - filename: README.md
@@ -103,10 +105,14 @@ fileignoreconfig:
   checksum: bd3ecff05d1290b7f7d0a4ba4267c3f34037b52aa82f13c31e35ca8803103b9b
 - filename: docker/nginx.conf
   checksum: a4632d785a11f199217d4229a40eba5a38180d9945d96799dc9b5efc6a3bc06e
+- filename: docs/design/2026-11-localised-time-resolved-carbon-estimation.md
+  checksum: ac9ecec26df09c22c529d37c43f19dad72d4b71d1aa1630e350a8a635970f40e
 - filename: microsite/blog/2023-08-23-ccf-on-vm.md
   checksum: 84e94d40daf06c50f7b0e26d8d73a300d967279a87612e991e417530bfb8774c
 - filename: microsite/docs/ClassifyingUsageTypes.md
   checksum: f4b232851337efec90c4a88271cdf4cde2a9d732f0f69824223f1dcf7c6b8aaa
+- filename: microsite/docs/ConfigurationOptions/EmissionsFactors.md
+  checksum: 7b6f523a84f1c507dfb4291cdb8fd309960fcdc669ace84211e1f53b66224b9b
 - filename: microsite/docs/ConfigurationOptions/PerformanceConsiderations.md
   checksum: f98b207c28550e3f44b27a47ebb0a5553c28318edaaf2f490ba94856a082badb
 - filename: microsite/docs/CreatingALookupTable.md
