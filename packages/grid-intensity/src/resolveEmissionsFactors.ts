@@ -278,8 +278,12 @@ export const resolveEmissionsFactors = async (
         factors: factorsOf(staticTable),
         provenance: resolved.provenance,
       }
+    const factor = gramsToTonnes(resolved.gCO2ePerKWh)
     return {
-      factors: { [region]: gramsToTonnes(resolved.gCO2ePerKWh) },
+      // estimateCo2 treats a 0 factor as missing and uses Unknown instead,
+      // so a zone at 0 gCO2e/kWh carries 0 there too (0, not NaN).
+      factors:
+        factor === 0 ? { [region]: 0, Unknown: 0 } : { [region]: factor },
       provenance: resolved.provenance,
     }
   } catch (error) {

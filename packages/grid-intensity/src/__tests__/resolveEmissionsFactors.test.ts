@@ -288,6 +288,25 @@ describe('resolveEmissionsFactors', () => {
       })
     })
 
+    it('carries a resolved 0 into the Unknown entry, which estimateCo2 falls back to for 0', async () => {
+      const resolver = new GridIntensityResolver({
+        sources: [new FakeSource({ value: () => 0 })],
+      })
+      const result = await resolveEmissionsFactors(
+        'AWS',
+        'eu-west-2',
+        START,
+        END,
+        awsTable,
+        { resolver },
+      )
+      expect(result.factors).toEqual({ 'eu-west-2': 0, Unknown: 0 })
+      expect(result.provenance).toMatchObject({
+        sourceId: 'fake',
+        gCO2ePerKWh: 0,
+      })
+    })
+
     it("rethrows an explicit resolver's errors other than no source being available", async () => {
       const resolver = {
         resolve: () => Promise.reject(new TypeError('resolver failed')),

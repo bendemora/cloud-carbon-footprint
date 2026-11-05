@@ -317,9 +317,11 @@ export function estimateKwh(
   emissionsFactors: CloudConstantsEmissionsFactors,
   replicationFactor = 1,
 ): number {
-  return (
-    (estimatedCo2e /
-      (emissionsFactors[region] || emissionsFactors['Unknown'])) *
-    replicationFactor
-  )
+  const emissionsFactor =
+    emissionsFactors[region] || emissionsFactors['Unknown']
+  // Embodied emissions are counted as kWh at the grid factor. With no
+  // non-zero factor (a zone at 0 gCO2e/kWh) there is no such conversion:
+  // count no kWh rather than Infinity or NaN.
+  if (!emissionsFactor) return 0
+  return (estimatedCo2e / emissionsFactor) * replicationFactor
 }

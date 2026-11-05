@@ -82,6 +82,28 @@ export const usageGranularityOf = (start: Date, end: Date): Granularity => {
   return 'year'
 }
 
+/** The shortest period of each granularity: February, a common year. */
+const SHORTEST_MS: Record<Granularity, number> = {
+  hour: HOUR_MS,
+  day: DAY_MS,
+  month: 28 * DAY_MS,
+  year: 365 * DAY_MS,
+}
+
+/**
+ * The coarsest granularity whose shortest period fits within [start, end):
+ * the coarsest intensity data still at least as fine as the usage period
+ * (design section 6.2, step 2). A week is 'day' and a quarter 'month', so
+ * monthly data is too coarse for a week and annual data for a quarter.
+ * Anything shorter than a day is 'hour'.
+ */
+export const coarsestWithin = (start: Date, end: Date): Granularity => {
+  const ms = end.getTime() - start.getTime()
+  return (
+    [...GRANULARITIES].reverse().find((g) => SHORTEST_MS[g] <= ms) ?? 'hour'
+  )
+}
+
 export interface Period {
   start: Date
   end: Date

@@ -15,8 +15,9 @@ const seriesId = (
  * Keeps points for the lifetime of the process. The resolver's default
  * store, used in tests, and the fallback when GRID_INTENSITY_STORE is
  * MONGODB but the MongoDB settings are missing or invalid, or the mode is
- * unknown. The resolver writes no points for sources whose retention is
- * 'session', to any store, so it fetches those again on every resolve call.
+ * unknown. The resolver never writes points from sources whose retention is
+ * 'session' to the configured store: it keeps them in its own in-memory
+ * store, cleared every capability TTL.
  */
 export class InMemoryIntensityStore implements IntensityStore {
   private readonly series = new Map<string, Map<number, IntensityPoint>>()

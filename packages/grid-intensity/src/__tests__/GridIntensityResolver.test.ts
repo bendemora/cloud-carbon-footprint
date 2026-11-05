@@ -10,7 +10,7 @@ import {
 } from '../GridIntensityResolver'
 import { StaticSource } from '../sources/StaticSource'
 import { InMemoryIntensityStore } from '../stores/InMemoryIntensityStore'
-import { IntensityPoint, IntensityStore } from '../types'
+import { Granularity, IntensityPoint, IntensityStore } from '../types'
 import { FakeSource } from './fixtures/FakeSource'
 
 const utc = (iso: string) => new Date(iso)
@@ -216,7 +216,38 @@ describe('GridIntensityResolver', () => {
       expect(recent.fetchCalls).toHaveLength(0)
     })
 
-    it('skips a source whose data does not yet reach the end of the period', async () => {
+    it("uses stored points from before the source's lookback window", async () => {
+      const store = new InMemoryIntensityStore()
+      await store.put(
+        await new FakeSource({ value: () => 180 }).fetch(
+          'GB',
+          DAY_START,
+          DAY_END,
+          'day',
+        ),
+      )
+      const recent = new FakeSource({
+        earliest: utc('2026-08-01T00:00:00.000Z'),
+      })
+      const { resolver } = createResolver({
+        sources: [recent, staticSource()],
+        store,
+      })
+      const result = await resolver.resolve(
+        'AWS',
+        'eu-west-2',
+        DAY_START,
+        DAY_END,
+      )
+      expect(result.provenance).toMatchObject({
+        sourceId: 'fake',
+        qualityTier: 'B',
+      })
+      expect(result.gCO2ePerKWh).toBe(180)
+      expect(recent.fetchCalls).toHaveLength(0)
+    })
+
+    it("serves the part of a period before the end of the source's data from its finest data, marked estimated", async () => {
       const lagging = new FakeSource({
         id: 'lagging',
         latest: utc('2026-03-10T12:00:00.000Z'),
@@ -230,7 +261,157 @@ describe('GridIntensityResolver', () => {
         DAY_START,
         DAY_END,
       )
+      expect(lagging.fetchCalls).toEqual([
+        {
+          zoneId: 'GB',
+          start: DAY_START.toISOString(),
+          end: '2026-03-10T12:00:00.000Z',
+          granularity: 'hour',
+        },
+      ])
+      expect(result.points).toHaveLength(12)
+      expect(result.provenance).toMatchObject({
+        sourceId: 'lagging',
+        granularity: 'hour',
+        isEstimated: true,
+        qualityTier: 'C',
+      })
+    })
+
+    it("serves a month that runs past the end of the source's data from daily data", async () => {
+      const lagging = new FakeSource({
+        id: 'lagging',
+        latest: utc('2026-03-10T12:00:00.000Z'),
+      })
+      const { resolver } = createResolver({ sources: [lagging] })
+      const result = await resolver.resolve(
+        'AWS',
+        'eu-west-2',
+        utc('2026-03-01T00:00:00.000Z'),
+        utc('2026-04-01T00:00:00.000Z'),
+      )
+      expect(lagging.fetchCalls).toEqual([
+        {
+          zoneId: 'GB',
+          start: '2026-03-01T00:00:00.000Z',
+          end: '2026-03-10T00:00:00.000Z',
+          granularity: 'day',
+        },
+      ])
+      expect(result.provenance).toMatchObject({
+        granularity: 'day',
+        isEstimated: true,
+      })
+    })
+
+    it('prefers a later source that covers the whole period over an earlier partial one', async () => {
+      const partial = new FakeSource({
+        id: 'partial',
+        granularities: ['hour'],
+        earliest: utc('2026-03-10T12:00:00.000Z'),
+        value: () => 300,
+      })
+      const full = new FakeSource({ id: 'full', value: () => 100 })
+      const { resolver } = createResolver({
+        sources: [partial, full, staticSource()],
+      })
+      const result = await resolver.resolve(
+        'AWS',
+        'eu-west-2',
+        DAY_START,
+        DAY_END,
+      )
+      expect(result.provenance).toMatchObject({
+        sourceId: 'full',
+        qualityTier: 'B',
+      })
+      expect(result.gCO2ePerKWh).toBe(100)
+    })
+
+    it('takes the partial result with the most coverage when no source covers the whole period', async () => {
+      const quarter = new FakeSource({
+        id: 'quarter',
+        granularities: ['hour'],
+        earliest: utc('2026-03-10T18:00:00.000Z'),
+      })
+      const half = new FakeSource({
+        id: 'half',
+        granularities: ['hour'],
+        earliest: utc('2026-03-10T12:00:00.000Z'),
+      })
+      const { resolver } = createResolver({
+        sources: [quarter, half, staticSource()],
+      })
+      const result = await resolver.resolve(
+        'AWS',
+        'eu-west-2',
+        DAY_START,
+        DAY_END,
+      )
+      expect(result.provenance).toMatchObject({
+        sourceId: 'half',
+        isEstimated: true,
+        qualityTier: 'C',
+      })
+    })
+
+    it('skips a source whose data ends before the period starts', async () => {
+      const stale = new FakeSource({
+        id: 'stale',
+        latest: utc('2026-03-01T00:00:00.000Z'),
+      })
+      const { resolver } = createResolver({
+        sources: [stale, staticSource()],
+      })
+      const result = await resolver.resolve(
+        'AWS',
+        'eu-west-2',
+        DAY_START,
+        DAY_END,
+      )
       expect(result.provenance.sourceId).toBe('static')
+      expect(stale.fetchCalls).toHaveLength(0)
+    })
+
+    it('counts daily data as fine enough for a week, and monthly data as too coarse', async () => {
+      const monthly = new FakeSource({
+        id: 'monthly',
+        granularities: ['month'],
+      })
+      const daily = new FakeSource({ id: 'daily', granularities: ['day'] })
+      const { resolver } = createResolver({ sources: [monthly, daily] })
+      const result = await resolver.resolve(
+        'AWS',
+        'eu-west-2',
+        utc('2026-04-06T00:00:00.000Z'),
+        utc('2026-04-13T00:00:00.000Z'),
+      )
+      expect(result.provenance).toMatchObject({
+        sourceId: 'daily',
+        qualityTier: 'B',
+      })
+      expect(monthly.fetchCalls).toHaveLength(0)
+    })
+
+    it('counts monthly data as fine enough for a quarter, and annual data as too coarse', async () => {
+      const monthly = new FakeSource({
+        id: 'monthly',
+        granularities: ['month'],
+      })
+      const { resolver } = createResolver({
+        sources: [staticSource(), monthly],
+      })
+      const result = await resolver.resolve(
+        'AWS',
+        'eu-west-2',
+        utc('2026-04-01T00:00:00.000Z'),
+        utc('2026-07-01T00:00:00.000Z'),
+      )
+      expect(result.provenance).toMatchObject({
+        sourceId: 'monthly',
+        granularity: 'month',
+      })
+      expect(result.points).toHaveLength(3)
     })
 
     it('throws NoIntensityAvailableError when no source can serve the region', async () => {
@@ -384,6 +565,99 @@ describe('GridIntensityResolver', () => {
       ).resolves.toEqual([])
     })
 
+    it('keeps points from a session-retention source in memory for the TTL only', async () => {
+      const store = new InMemoryIntensityStore()
+      const live = new FakeSource({ licence: { retention: 'session' } })
+      const { resolver, advanceHours } = createResolver({
+        sources: [live],
+        store,
+        capabilityTtlHours: 24,
+      })
+      for (let row = 0; row < 3; row++)
+        await resolver.resolve('AWS', 'eu-west-2', DAY_START, DAY_END)
+      expect(live.fetchCalls).toHaveLength(1)
+      await expect(
+        store.get('fake', 'GB', DAY_START, DAY_END, 'day'),
+      ).resolves.toEqual([])
+
+      advanceHours(25)
+      await resolver.resolve('AWS', 'eu-west-2', DAY_START, DAY_END)
+      expect(live.fetchCalls).toHaveLength(2)
+    })
+
+    it('releases session-retention points on the first call after the TTL, whatever it resolves', async () => {
+      const live = new FakeSource({ licence: { retention: 'session' } })
+      const { resolver, advanceHours } = createResolver({
+        sources: [live, staticSource()],
+        capabilityTtlHours: 24,
+      })
+      const session = () =>
+        (resolver as unknown as { session: IntensityStore }).session.get(
+          'fake',
+          'GB',
+          DAY_START,
+          DAY_END,
+          'day',
+        )
+      await resolver.resolve('AWS', 'eu-west-2', DAY_START, DAY_END)
+      await expect(session()).resolves.toHaveLength(1)
+      advanceHours(25)
+      await resolver
+        .resolve('GCP', 'europe-west2', DAY_START, DAY_END)
+        .catch(() => undefined)
+      await expect(session()).resolves.toEqual([])
+    })
+
+    it('reads the store after the first probe of a fresh resolver fails', async () => {
+      const store = new InMemoryIntensityStore()
+      await createResolver({
+        sources: [new FakeSource({ value: () => 42 })],
+        store,
+      }).resolver.resolve('AWS', 'eu-west-2', DAY_START, DAY_END)
+
+      const failing = new FakeSource({ failCapabilities: true })
+      const { resolver, logger } = createResolver({
+        sources: [failing, staticSource()],
+        store,
+      })
+      const result = await resolver.resolve(
+        'AWS',
+        'eu-west-2',
+        DAY_START,
+        DAY_END,
+      )
+      expect(result.provenance).toMatchObject({
+        sourceId: 'fake',
+        granularity: 'day',
+        qualityTier: 'B',
+      })
+      expect(result.gCO2ePerKWh).toBe(42)
+      expect(failing.fetchCalls).toHaveLength(0)
+      expect(logger.warn).toHaveBeenCalledTimes(1)
+    })
+
+    it('warns about a store failure again after the store has worked in between', async () => {
+      const store: IntensityStore = {
+        get: jest
+          .fn()
+          .mockRejectedValueOnce(new Error('timeout'))
+          .mockResolvedValueOnce([])
+          .mockRejectedValueOnce(new Error('timeout again')),
+        put: jest.fn().mockResolvedValue(undefined),
+        purge: jest.fn(),
+      }
+      const { resolver, logger } = createResolver({
+        sources: [new FakeSource({ licence: { retention: 'unlimited' } })],
+        store,
+      })
+      for (let row = 0; row < 3; row++)
+        await resolver.resolve('AWS', 'eu-west-2', DAY_START, DAY_END)
+      expect(logger.warn.mock.calls.map(([message]) => message)).toEqual([
+        'Grid intensity store read failed for source fake, zone GB: timeout',
+        'Grid intensity store read failed for source fake, zone GB: timeout again',
+      ])
+    })
+
     it('neither reads nor writes the store for the static source', async () => {
       const store: IntensityStore = {
         get: jest.fn().mockResolvedValue([]),
@@ -402,14 +676,19 @@ describe('GridIntensityResolver', () => {
       expect(store.put).not.toHaveBeenCalled()
     })
 
-    it('carries on without the store when it fails, warning once', async () => {
+    it('carries on without the store when it fails, warning once per operation and zone', async () => {
       const failingStore: IntensityStore = {
         get: jest.fn().mockRejectedValue(new Error('disk full')),
         put: jest.fn().mockRejectedValue(new Error('disk full')),
         purge: jest.fn(),
       }
       const { resolver, logger } = createResolver({
-        sources: [new FakeSource({ value: () => 120 })],
+        sources: [
+          new FakeSource({
+            value: () => 120,
+            zones: { 'eu-west-2': 'GB', 'eu-west-3': 'FR' },
+          }),
+        ],
         store: failingStore,
       })
       const result = await resolver.resolve(
@@ -419,9 +698,14 @@ describe('GridIntensityResolver', () => {
         DAY_END,
       )
       await resolver.resolve('AWS', 'eu-west-2', DAY_START, DAY_END)
+      await resolver.resolve('AWS', 'eu-west-3', DAY_START, DAY_END)
       expect(result.gCO2ePerKWh).toBe(120)
-      expect(logger.warn).toHaveBeenCalledTimes(1)
-      expect(logger.warn.mock.calls[0][0]).toContain('disk full')
+      expect(logger.warn.mock.calls.map(([message]) => message)).toEqual([
+        'Grid intensity store read failed for source fake, zone GB: disk full',
+        'Grid intensity store write failed for source fake, zone GB: disk full',
+        'Grid intensity store read failed for source fake, zone FR: disk full',
+        'Grid intensity store write failed for source fake, zone FR: disk full',
+      ])
     })
   })
 
@@ -476,6 +760,76 @@ describe('GridIntensityResolver', () => {
       expect(result.provenance.sourceId).toBe('static')
       expect(live.capabilityCalls).toBe(1)
       expect(logger.warn).toHaveBeenCalledTimes(1)
+    })
+
+    it('serves stored points for a zone whose fetches are failing', async () => {
+      const live = new FakeSource({ value: () => 150 })
+      const { resolver } = createResolver({
+        sources: [live, staticSource()],
+        store: new InMemoryIntensityStore(),
+      })
+      await resolver.resolve('AWS', 'eu-west-2', DAY_START, DAY_END)
+      live.failFetch = true
+      const failed = await resolver.resolve(
+        'AWS',
+        'eu-west-2',
+        utc('2026-03-11T00:00:00.000Z'),
+        utc('2026-03-12T00:00:00.000Z'),
+      )
+      const stored = await resolver.resolve(
+        'AWS',
+        'eu-west-2',
+        DAY_START,
+        DAY_END,
+      )
+      expect(failed.provenance.sourceId).toBe('static')
+      expect(stored.provenance).toMatchObject({
+        sourceId: 'fake',
+        qualityTier: 'B',
+      })
+      expect(stored.gCO2ePerKWh).toBe(150)
+      expect(live.fetchCalls).toHaveLength(2)
+    })
+
+    it('keeps serving stored points when a later capability probe fails', async () => {
+      const live = new FakeSource({ value: () => 150 })
+      const { resolver, logger, advanceHours } = createResolver({
+        sources: [live, staticSource()],
+        capabilityTtlHours: 24,
+      })
+      await resolver.resolve('AWS', 'eu-west-2', DAY_START, DAY_END)
+      advanceHours(25)
+      live.failCapabilities = true
+      const stored = await resolver.resolve(
+        'AWS',
+        'eu-west-2',
+        DAY_START,
+        DAY_END,
+      )
+      const missing = await resolver.resolve(
+        'AWS',
+        'eu-west-2',
+        utc('2026-03-11T00:00:00.000Z'),
+        utc('2026-03-12T00:00:00.000Z'),
+      )
+      expect(stored.provenance.sourceId).toBe('fake')
+      expect(missing.provenance.sourceId).toBe('static')
+      expect(live.capabilityCalls).toBe(2)
+      expect(live.fetchCalls).toHaveLength(1)
+      expect(logger.warn).toHaveBeenCalledTimes(1)
+    })
+
+    it('logs a failure again when it recurs after the TTL', async () => {
+      const live = new FakeSource({ failFetch: true })
+      const { resolver, logger, advanceHours } = createResolver({
+        sources: [live, staticSource()],
+        capabilityTtlHours: 24,
+      })
+      await resolver.resolve('AWS', 'eu-west-2', DAY_START, DAY_END)
+      advanceHours(25)
+      await resolver.resolve('AWS', 'eu-west-2', DAY_START, DAY_END)
+      expect(live.fetchCalls).toHaveLength(2)
+      expect(logger.warn).toHaveBeenCalledTimes(2)
     })
 
     it('caches a successful capability answer for the TTL', async () => {
@@ -540,6 +894,45 @@ describe('GridIntensityResolver', () => {
       const { resolver, logger } = createResolver({ sources: [live] })
       await resolver.resolve('AWS', 'eu-west-2', DAY_START, DAY_END)
       expect(logger.warn.mock.calls[0][0]).toContain('Dropped 2 points')
+    })
+
+    it('drops points that are not whole periods of the zone, so overlaps cannot hide a gap', async () => {
+      class Untidy extends FakeSource {
+        async fetch(
+          zoneId: string,
+          start: Date,
+          end: Date,
+          granularity: Granularity,
+        ): Promise<IntensityPoint[]> {
+          const points = await super.fetch(zoneId, start, end, granularity)
+          return [
+            ...points,
+            {
+              ...points[12],
+              periodStart: utc('2026-03-10T12:30:00.000Z'),
+              periodEnd: utc('2026-03-10T13:30:00.000Z'),
+              gCO2ePerKWh: 800,
+            },
+            { ...points[1], zoneId: 'FR', gCO2ePerKWh: 900 },
+            { ...points[2], granularity: 'day', gCO2ePerKWh: 900 },
+            { ...points[3], sourceId: 'other', gCO2ePerKWh: 900 },
+          ]
+        }
+      }
+      const { resolver, logger } = createResolver({
+        sources: [new Untidy({ granularities: ['hour'] })],
+      })
+      const result = await resolver.resolve(
+        'AWS',
+        'eu-west-2',
+        DAY_START,
+        DAY_END,
+      )
+      expect(result.gCO2ePerKWh).toBe(100)
+      expect(result.points).toHaveLength(24)
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Dropped 4 points from grid intensity source fake for zone GB that are not whole UTC hour periods of that zone.',
+      )
     })
 
     it('marks a partially covered period as estimated, tier C', async () => {
