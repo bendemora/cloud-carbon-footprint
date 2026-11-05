@@ -74,6 +74,7 @@ describe('resolveEmissionsFactors', () => {
         zoneId: 'aws:eu-west-2',
         qualityTier: 'D',
         isEstimated: false,
+        gCO2ePerKWh: 305,
       })
     })
 
@@ -103,6 +104,7 @@ describe('resolveEmissionsFactors', () => {
       )
       expect(result.factors).toBe(awsFactors)
       expect(result.provenance.zoneId).toBe('aws:Unknown')
+      expect(result.provenance.gCO2ePerKWh).toBe(400)
     })
 
     it('still returns the table, flagged as estimated, when no source can serve the region', async () => {
@@ -124,6 +126,8 @@ describe('resolveEmissionsFactors', () => {
         isEstimated: true,
         licenceId: 'open-attribution',
         qualityTier: 'D',
+        // the table has neither the region nor an Unknown entry
+        gCO2ePerKWh: NaN,
         modelVersion: 'unversioned',
       })
     })
@@ -169,6 +173,7 @@ describe('resolveEmissionsFactors', () => {
         zoneId: 'aws:eu-west-2',
         isEstimated: false,
         qualityTier: 'D',
+        gCO2ePerKWh: 305,
       })
     })
 
@@ -230,6 +235,7 @@ describe('resolveEmissionsFactors', () => {
         sourceId: 'fake',
         zoneId: 'GB',
         qualityTier: 'B',
+        gCO2ePerKWh: 187.5,
       })
     })
 
@@ -282,6 +288,7 @@ describe('resolveEmissionsFactors', () => {
         isEstimated: true,
         licenceId: 'custom',
         qualityTier: 'C',
+        gCO2ePerKWh: 212,
         modelVersion: 'unversioned',
       })
     })

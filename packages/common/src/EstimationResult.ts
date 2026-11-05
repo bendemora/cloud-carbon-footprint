@@ -5,6 +5,7 @@
 import { reduceBy } from 'ramda'
 import { GroupBy } from './Config'
 import { getPeriodEndDate } from './helpers'
+import { Provenance } from './Provenance'
 
 export interface EstimationResult {
   readonly timestamp: Date
@@ -26,6 +27,8 @@ export interface ServiceData {
   serviceName: string
   region: string
   tags?: TagCollection
+  /** Where the grid intensity came from. Absent on rows estimated before it was recorded. */
+  provenance?: Provenance
 }
 
 export interface TagCollection {

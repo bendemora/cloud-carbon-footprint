@@ -18,6 +18,14 @@ export type {
   ServiceData,
   TagCollection,
 } from './EstimationResult'
+export type {
+  EmissionFactorType,
+  Granularity,
+  IntensityBasis,
+  LicenceId,
+  Provenance,
+  QualityTier,
+} from './Provenance'
 export type { EmissionRatioResult } from './EmissionRatioResult'
 export type {
   RecommendationResult,
