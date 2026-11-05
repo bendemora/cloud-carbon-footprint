@@ -78,6 +78,23 @@ export const getEmissionsFactors = async (
   }
 }
 
+/**
+ * Whether a 401 body is Electricity Maps refusing this zone or endpoint for a
+ * valid token ("Request unauthorized for zoneKey=GB,..."), rather than
+ * rejecting the token ("Invalid auth-token").
+ */
+const isZoneAccessDenial = (body: string): boolean => {
+  try {
+    const error = JSON.parse(body)?.error
+    return (
+      typeof error === 'string' &&
+      error.startsWith('Request unauthorized for zoneKey=')
+    )
+  } catch {
+    return false
+  }
+}
+
 export const getElectricityMapsData = async (
   electricityMapsZone: string,
   dateTime: string,
@@ -89,12 +106,16 @@ export const getElectricityMapsData = async (
         'auth-token': configLoader().ELECTRICITY_MAPS_TOKEN,
       },
     })
-    // An invalid or expired token, or a server error, would be answered the
-    // same way for every zone and date: fail rather than fall back to the
-    // default factors row by row. Other answers without a value (a zone the
-    // token cannot access) still fall back for that zone.
+    // An invalid token, or a server error, would be answered the same way
+    // for every zone and date: fail rather than fall back to the default
+    // factors row by row. A 401 that names the zone (a valid token without
+    // access to this zone or endpoint) and other answers without a value
+    // still fall back for that zone.
     if (res.status === 401 || res.status >= 500) {
-      const body = (await res.text()).slice(0, 200)
+      const text = await res.text()
+      if (res.status === 401 && isZoneAccessDenial(text))
+        return JSON.parse(text)
+      const body = text.slice(0, 200)
       throw new Error(
         `Electricity Maps answered HTTP ${res.status}${body ? `: ${body}` : ''}`,
       )
