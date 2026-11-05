@@ -39,9 +39,10 @@ components:
                     type: object
                     additionalProperties:
                       type: string
-              provenance?:
+              provenance:
                 type: object
-                description: Where the grid intensity behind co2e came from. Absent on rows estimated before it was recorded, and for Alibaba Cloud and on-premise rows.
+                description: Where the grid intensity behind co2e came from. Optional. Present on AWS, Google Cloud and Azure estimates computed from billing data. Absent on estimates from the cloud usage APIs (billing data turned off), on rows cached before it was recorded, and on Alibaba Cloud and on-premise rows.
+                required: [sourceId, zoneId, granularity, basis, factorType, isEstimated, licenceId, qualityTier, gCO2ePerKWh, modelVersion]
                 properties:
                   sourceId:
                     type: string
@@ -68,11 +69,12 @@ components:
                     enum: [A, B, C, D]
                   gCO2ePerKWh:
                     type: number
-                    description: Grid intensity applied to the row's operational energy
+                    description: Grid intensity applied to the row, in gCO2e/kWh. kilowattHours includes embodied emissions converted at this factor, so for a row with a co2e value, co2e (tonnes) is kilowattHours times this value divided by 1,000,000.
                   modelVersion:
                     type: string
-                  calibrationVersion?:
+                  calibrationVersion:
                     type: string
+                    description: Optional. Present when calibration was applied.
         periodStartDate:
           type: string
         periodEndDate:

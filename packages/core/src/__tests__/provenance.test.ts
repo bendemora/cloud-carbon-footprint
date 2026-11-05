@@ -52,10 +52,37 @@ describe('mergeProvenance', () => {
     expect(mergeProvenance(liveProvenance, 3, staticProvenance, 1)).toEqual({
       ...staticProvenance,
       isEstimated: true,
+      // the live row's licence is the more restrictive one
+      licenceId: 'custom',
       // (200 * 3 + 305 * 1) / 4
       gCO2ePerKWh: 226.25,
     })
   })
+
+  it.each([
+    ['open-attribution', 'custom', 'custom'],
+    ['public-domain', 'CC-BY-4.0', 'CC-BY-4.0'],
+    ['CC-BY-4.0', 'non-commercial', 'non-commercial'],
+    ['public-domain', 'commercial', 'commercial'],
+    ['CC-BY-4.0', 'open-attribution', 'open-attribution'],
+    ['commercial', 'non-commercial', 'custom'],
+  ] as const)(
+    'takes the more restrictive licence, whichever row has the lower tier: %s with %s is %s',
+    (oneLicence, otherLicence, merged) => {
+      for (const [liveLicence, staticLicence] of [
+        [oneLicence, otherLicence],
+        [otherLicence, oneLicence],
+      ])
+        expect(
+          mergeProvenance(
+            { ...liveProvenance, licenceId: liveLicence },
+            1,
+            { ...staticProvenance, licenceId: staticLicence },
+            1,
+          )?.licenceId,
+        ).toBe(merged)
+    },
+  )
 
   it('drops a tier A or B row to C when it has to be marked estimated', () => {
     const hourly: Provenance = {
@@ -114,6 +141,7 @@ describe('appendOrAccumulateEstimatesByDay with provenance', () => {
     cost: 1,
     cloudProvider: 'AWS',
     vCpuHours: 2,
+    gpuHours: 0,
     instanceType: 'm5.large',
     replicationFactor: 1,
     tags: {},
@@ -181,6 +209,7 @@ describe('appendOrAccumulateEstimatesByDay with provenance', () => {
     expect(results[0].serviceEstimates[0].provenance).toEqual({
       ...staticProvenance,
       isEstimated: true,
+      licenceId: 'custom',
       gCO2ePerKWh: 226.25,
     })
   })

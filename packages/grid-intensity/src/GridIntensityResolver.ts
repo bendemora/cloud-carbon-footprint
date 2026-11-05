@@ -65,9 +65,11 @@ interface Candidate {
  * Picks the best available source for each usage period and returns the
  * time-weighted intensity with provenance (section 6.2 of the design).
  *
- * One instance is meant to live for one estimation run: warnings are logged
- * once per source and zone for its lifetime, and failures are
- * negative-cached for the capability TTL.
+ * Warnings are logged once per source and zone for an instance's lifetime,
+ * and failures are negative-cached for the capability TTL. The default
+ * resolver that resolveEmissionsFactors builds lives for the process: one
+ * CLI run, or the life of the API server, so there a recurring failure is
+ * logged once per server process.
  */
 export class GridIntensityResolver implements IntensityResolver {
   private readonly sources: GridIntensitySource[]
@@ -225,7 +227,12 @@ export class GridIntensityResolver implements IntensityResolver {
           range.end,
           granularity,
         )
-        fetched.push(...this.validPoints(source.id, zoneId, points))
+        // The bounds are a check on fetched data before it is stored (design
+        // section 13). Values from code are not fetched or stored, and CCF's
+        // GCP multi-region factors (sums across data centres) exceed them.
+        fetched.push(
+          ...(persist ? this.validPoints(source.id, zoneId, points) : points),
+        )
       } catch (error) {
         this.fail(source, zoneId, 'fetch', error)
         break
