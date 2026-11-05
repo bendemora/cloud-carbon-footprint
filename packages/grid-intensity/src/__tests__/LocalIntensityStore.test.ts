@@ -3,13 +3,34 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { mkdtemp, readdir, readFile, rm, writeFile, mkdir } from 'fs/promises'
+import {
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+  mkdir,
+  utimes,
+} from 'fs/promises'
+import fsPromises from 'fs/promises'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { join, relative } from 'path'
 import { LocalIntensityStore } from '../stores/LocalIntensityStore'
 import { Granularity, IntensityPoint } from '../types'
 
 const utc = (iso: string) => new Date(iso)
+const HOUR_MS = 3600 * 1000
+
+/** `hours` hourly points from `dayStart`, valued by hour of the month. */
+const hourly = (dayStart: string, hours = 24): IntensityPoint[] =>
+  Array.from({ length: hours }, (_, i) => {
+    const start = new Date(utc(dayStart).getTime() + i * HOUR_MS)
+    return point(
+      start.toISOString(),
+      new Date(start.getTime() + HOUR_MS).toISOString(),
+      { gCO2ePerKWh: start.getUTCDate() * 100 + start.getUTCHours() },
+    )
+  })
 
 const point = (
   periodStart: string,
@@ -264,6 +285,326 @@ describe('LocalIntensityStore', () => {
         'hour',
       ),
     ).resolves.toHaveLength(1)
+  })
+
+  describe('overlapping writes', () => {
+    const october = (store: LocalIntensityStore) =>
+      store.get(
+        'electricitymaps',
+        'GB',
+        utc('2026-10-01T00:00:00.000Z'),
+        utc('2026-11-01T00:00:00.000Z'),
+        'hour',
+      )
+
+    it('keeps every point when puts to the same file overlap', async () => {
+      const store = new LocalIntensityStore(directory)
+      const days = Array.from(
+        { length: 10 },
+        (_, d) => `2026-10-${String(d + 1).padStart(2, '0')}T00:00:00.000Z`,
+      )
+      await Promise.all(days.map((day) => store.put(hourly(day))))
+      const points = await october(store)
+      expect(points).toHaveLength(240)
+      expect(points[239].gCO2ePerKWh).toBe(1023)
+    })
+
+    it('leaves a readable file when a large and a small put overlap', async () => {
+      const store = new LocalIntensityStore(directory)
+      const large = Array.from({ length: 25 }, (_, d) =>
+        hourly(`2026-10-${String(d + 1).padStart(2, '0')}T00:00:00.000Z`),
+      ).flat()
+      await Promise.all([
+        store.put(large),
+        store.put(hourly('2026-10-30T00:00:00.000Z', 1)),
+      ])
+      await expect(october(store)).resolves.toHaveLength(601)
+    })
+
+    it('keeps every point when two stores on one directory write at once', async () => {
+      const first = new LocalIntensityStore(directory)
+      // The same directory spelled relative to the working directory.
+      const second = new LocalIntensityStore(relative(process.cwd(), directory))
+      await Promise.all([
+        first.put(hourly('2026-10-01T00:00:00.000Z')),
+        second.put(hourly('2026-10-02T00:00:00.000Z')),
+        first.put(hourly('2026-10-03T00:00:00.000Z')),
+      ])
+      await expect(october(first)).resolves.toHaveLength(72)
+    })
+
+    it('keeps every point when a purge and a put overlap', async () => {
+      const store = new LocalIntensityStore(directory)
+      await store.put(
+        hourly('2026-10-01T00:00:00.000Z').map((p) => ({
+          ...p,
+          retrievedAt: utc('2026-09-01T00:00:00.000Z'),
+        })),
+      )
+      const [removed] = await Promise.all([
+        store.purge('electricitymaps', utc('2026-10-01T00:00:00.000Z')),
+        store.put(hourly('2026-10-02T00:00:00.000Z')),
+      ])
+      expect(removed).toBe(24)
+      await expect(october(store)).resolves.toHaveLength(24)
+    })
+
+    it('leaves no temporary files behind', async () => {
+      const store = new LocalIntensityStore(directory)
+      await Promise.all([
+        store.put(hourly('2026-10-01T00:00:00.000Z')),
+        store.put(hourly('2026-10-02T00:00:00.000Z')),
+      ])
+      expect(await readdir(join(directory, 'electricitymaps', 'GB'))).toEqual([
+        '2026-10.hour.json',
+      ])
+    })
+
+    it("leaves another writer's temporary file alone when its name is taken", async () => {
+      const store = new LocalIntensityStore(directory)
+      const taken = Object.assign(new Error('EEXIST: file already exists'), {
+        code: 'EEXIST',
+      })
+      const write = jest
+        .spyOn(fsPromises, 'writeFile')
+        .mockRejectedValueOnce(taken)
+      const remove = jest.spyOn(fsPromises, 'rm')
+      try {
+        await expect(
+          store.put(hourly('2026-10-01T00:00:00.000Z', 1)),
+        ).rejects.toThrow('EEXIST')
+        expect(remove).not.toHaveBeenCalled()
+      } finally {
+        write.mockRestore()
+        remove.mockRestore()
+      }
+    })
+
+    it('removes its temporary file when a write fails', async () => {
+      const store = new LocalIntensityStore(directory)
+      await store.put(hourly('2026-10-01T00:00:00.000Z', 1))
+      const rename = jest
+        .spyOn(fsPromises, 'rename')
+        .mockRejectedValueOnce(new Error('EXDEV: cross-device link'))
+      try {
+        await expect(
+          store.put(hourly('2026-10-02T00:00:00.000Z', 1)),
+        ).rejects.toThrow('EXDEV')
+      } finally {
+        rename.mockRestore()
+      }
+      expect(await readdir(join(directory, 'electricitymaps', 'GB'))).toEqual([
+        '2026-10.hour.json',
+      ])
+      await expect(october(store)).resolves.toHaveLength(1)
+    })
+  })
+
+  describe('ids that differ only in case', () => {
+    it('serialises their writes, so neither is lost without an error', async () => {
+      // On a case-insensitive file system both puts are for one file: the
+      // second must see the first one's header and fail. On a case-sensitive
+      // one they are two files and both succeed.
+      await writeFile(join(directory, 'CaseProbe'), '')
+      const caseInsensitive = await fsPromises
+        .access(join(directory, 'caseprobe'))
+        .then(
+          () => true,
+          () => false,
+        )
+      const store = new LocalIntensityStore(directory)
+      const results = await Promise.allSettled([
+        store.put(hourly('2026-10-01T00:00:00.000Z', 2)),
+        store.put(
+          hourly('2026-10-01T02:00:00.000Z', 1).map((p) => ({
+            ...p,
+            zoneId: 'gb',
+          })),
+        ),
+      ])
+      expect(results.map((r) => r.status)).toEqual(
+        caseInsensitive
+          ? ['fulfilled', 'rejected']
+          : ['fulfilled', 'fulfilled'],
+      )
+      await expect(
+        store.get(
+          'electricitymaps',
+          'GB',
+          utc('2026-10-01T00:00:00.000Z'),
+          utc('2026-10-02T00:00:00.000Z'),
+          'hour',
+        ),
+      ).resolves.toHaveLength(2)
+    })
+
+    // A case-insensitive file system (the macOS default) resolves the path of
+    // zone 'gb' to the directory of zone 'GB'. Simulated here by writing
+    // zone GB's file where zone gb's file would be, so the test behaves the
+    // same on case-sensitive file systems.
+    const collide = async () => {
+      await new LocalIntensityStore(directory).put(
+        hourly('2026-10-01T00:00:00.000Z', 1),
+      )
+      await mkdir(join(directory, 'electricitymaps', 'gb'), {
+        recursive: true,
+      })
+      await writeFile(
+        join(directory, 'electricitymaps', 'gb', '2026-10.hour.json'),
+        await readFile(
+          join(directory, 'electricitymaps', 'GB', '2026-10.hour.json'),
+        ),
+      )
+    }
+
+    it("does not return another zone's points", async () => {
+      await collide()
+      await expect(
+        new LocalIntensityStore(directory).get(
+          'electricitymaps',
+          'gb',
+          utc('2026-10-01T00:00:00.000Z'),
+          utc('2026-10-02T00:00:00.000Z'),
+          'hour',
+        ),
+      ).resolves.toEqual([])
+    })
+
+    it("refuses to write into another zone's file, naming both ids", async () => {
+      await collide()
+      await expect(
+        new LocalIntensityStore(directory).put(
+          hourly('2026-10-01T00:00:00.000Z', 1).map((p) => ({
+            ...p,
+            zoneId: 'gb',
+          })),
+        ),
+      ).rejects.toThrow("holds zone 'GB', not 'gb'")
+    })
+
+    it('checks the source id the same way', async () => {
+      await collide()
+      const store = new LocalIntensityStore(directory)
+      await writeFile(
+        join(directory, 'electricitymaps', 'GB', '2026-10.hour.json'),
+        JSON.stringify({
+          version: 1,
+          sourceId: 'ElectricityMaps',
+          zoneId: 'GB',
+          granularity: 'hour',
+          points: [],
+        }),
+      )
+      await expect(
+        store.put(hourly('2026-10-01T00:00:00.000Z', 1)),
+      ).rejects.toThrow("holds source 'ElectricityMaps', not 'electricitymaps'")
+    })
+  })
+
+  describe('purge with files the store did not write', () => {
+    const expired = (zoneId: string) =>
+      hourly('2026-10-01T00:00:00.000Z', 1).map((p) => ({
+        ...p,
+        zoneId,
+        retrievedAt: utc('2026-09-01T00:00:00.000Z'),
+      }))
+    const cutOff = utc('2026-10-01T00:00:00.000Z')
+
+    it('skips files and directories that are not store files', async () => {
+      const store = new LocalIntensityStore(directory)
+      await store.put([...expired('DE'), ...expired('FR')])
+      await writeFile(join(directory, 'electricitymaps', '.DS_Store'), 'x')
+      await writeFile(
+        join(directory, 'electricitymaps', 'DE', '.DS_Store'),
+        'x',
+      )
+      await mkdir(join(directory, 'electricitymaps', 'DE', 'notes'))
+      await expect(store.purge('electricitymaps', cutOff)).resolves.toBe(2)
+      expect(
+        (await readdir(join(directory, 'electricitymaps', 'DE'))).sort(),
+      ).toEqual(['.DS_Store', 'notes'])
+    })
+
+    it('keeps a temporary file changed in the last hour, even with a cut-off in the future', async () => {
+      const store = new LocalIntensityStore(directory)
+      await store.put(
+        hourly('2026-10-01T00:00:00.000Z', 1).map((p) => ({
+          ...p,
+          zoneId: 'DE',
+        })),
+      )
+      const zoneDirectory = join(directory, 'electricitymaps', 'DE')
+      const inFlight = join(zoneDirectory, '2026-10.hour.json.4243-1.tmp')
+      await writeFile(inFlight, '{"version":1,"poi')
+      const tomorrow = new Date(Date.now() + 24 * 3600 * 1000)
+      await store.purge('electricitymaps', tomorrow)
+      expect(await readdir(zoneDirectory)).toEqual([
+        '2026-10.hour.json.4243-1.tmp',
+      ])
+    })
+
+    it('removes temporary files last changed before the cut-off and keeps newer ones', async () => {
+      const store = new LocalIntensityStore(directory)
+      await store.put(
+        hourly('2026-10-01T00:00:00.000Z', 1).map((p) => ({
+          ...p,
+          zoneId: 'DE',
+        })),
+      )
+      const zoneDirectory = join(directory, 'electricitymaps', 'DE')
+      const stale = join(zoneDirectory, '2026-10.hour.json.4242-1.tmp')
+      const inFlight = join(zoneDirectory, '2026-10.hour.json.4243-1.tmp')
+      await writeFile(stale, '{"version":1,"poi')
+      await writeFile(inFlight, '{"version":1,"poi')
+      const longAgo = utc('2026-09-01T00:00:00.000Z')
+      await utimes(stale, longAgo, longAgo)
+      await expect(store.purge('electricitymaps', cutOff)).resolves.toBe(0)
+      expect((await readdir(zoneDirectory)).sort()).toEqual([
+        '2026-10.hour.json',
+        '2026-10.hour.json.4243-1.tmp',
+      ])
+    })
+
+    it('purges the other files when one is corrupt, then reports it', async () => {
+      const store = new LocalIntensityStore(directory)
+      await store.put([...expired('DE'), ...expired('FR')])
+      const corrupt = join(
+        directory,
+        'electricitymaps',
+        'DE',
+        '2026-10.hour.json',
+      )
+      await writeFile(corrupt, '{ not json')
+      await expect(store.purge('electricitymaps', cutOff)).rejects.toThrow(
+        corrupt,
+      )
+      expect(await readdir(join(directory, 'electricitymaps', 'FR'))).toEqual(
+        [],
+      )
+    })
+
+    it('purges the other zones when a zone directory cannot be listed', async () => {
+      const store = new LocalIntensityStore(directory)
+      await store.put([...expired('DE'), ...expired('FR')])
+      const unreadable = join(directory, 'electricitymaps', 'DE')
+      const original = fsPromises.readdir
+      const list = jest
+        .spyOn(fsPromises, 'readdir')
+        .mockImplementation(((path: string, options: never) =>
+          path === unreadable
+            ? Promise.reject(new Error(`EACCES: scandir '${path}'`))
+            : original(path, options)) as never)
+      try {
+        await expect(store.purge('electricitymaps', cutOff)).rejects.toThrow(
+          `could not purge 1 of the store's paths (points removed from the others: 1): EACCES: scandir '${unreadable}'`,
+        )
+      } finally {
+        list.mockRestore()
+      }
+      expect(await readdir(join(directory, 'electricitymaps', 'FR'))).toEqual(
+        [],
+      )
+    })
   })
 
   it('purges nothing for a source with no files', async () => {
