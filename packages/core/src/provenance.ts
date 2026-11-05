@@ -3,7 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Provenance, QualityTier } from '@cloud-carbon-footprint/common'
+import {
+  LicenceId,
+  Provenance,
+  QualityTier,
+} from '@cloud-carbon-footprint/common'
 
 const COMPARED_FIELDS: (keyof Provenance)[] = [
   'sourceId',
@@ -32,14 +36,40 @@ const markEstimated = (provenance: Provenance): Provenance => ({
   qualityTier: estimatedTier(provenance.qualityTier),
 })
 
+/** 0: no conditions; 1: attribution required; 2: restricted terms. */
+const RESTRICTIVENESS: Record<LicenceId, number> = {
+  'public-domain': 0,
+  'CC-BY-4.0': 1,
+  'open-attribution': 1,
+  commercial: 2,
+  'non-commercial': 2,
+  custom: 2,
+}
+
+/**
+ * The licence of a row that mixes values under two licences: the more
+ * restrictive one, so a row with restricted data in it is never labelled
+ * open. Two different licences of the same level become 'open-attribution'
+ * (both require attribution) or 'custom' (both restrict use).
+ */
+const mergeLicence = (a: LicenceId, b: LicenceId): LicenceId => {
+  if (a === b) return a
+  if (RESTRICTIVENESS[a] !== RESTRICTIVENESS[b])
+    return RESTRICTIVENESS[a] > RESTRICTIVENESS[b] ? a : b
+  return RESTRICTIVENESS[a] === 2 ? 'custom' : 'open-attribution'
+}
+
 /**
  * The provenance of a service estimate that two billing rows were
  * accumulated into. Rows of the same region and usage period normally carry
  * identical provenance, which is kept as it is. When they differ, the
- * merged row takes the fields of the lower-tier row, is marked estimated,
- * and its intensity is the energy-weighted mean of the two, which is the
- * intensity of their combined operational emissions. When only one row has
- * provenance, that one is kept, marked estimated.
+ * merged row takes the fields of the lower-tier row, except the licence,
+ * which is the more restrictive of the two; it is marked estimated, and its
+ * intensity is the energy-weighted mean of the two. kilowattHours includes
+ * embodied emissions converted at each row's factor, so that mean is the
+ * merged row's co2e (tonnes) x 1e6 divided by its kilowattHours, not an
+ * operational-only intensity. When only one row has provenance, that one is kept, marked
+ * estimated.
  */
 export const mergeProvenance = (
   a: Provenance | undefined,
@@ -58,5 +88,9 @@ export const mergeProvenance = (
       ? (a.gCO2ePerKWh * aKilowattHours + b.gCO2ePerKWh * bKilowattHours) /
         totalKilowattHours
       : (a.gCO2ePerKWh + b.gCO2ePerKWh) / 2
-  return { ...markEstimated(lower), gCO2ePerKWh }
+  return {
+    ...markEstimated(lower),
+    licenceId: mergeLicence(a.licenceId, b.licenceId),
+    gCO2ePerKWh,
+  }
 }

@@ -36,6 +36,8 @@ export type {
   ResolverLogger,
 } from './GridIntensityResolver'
 export {
+  ElectricityMapsRequestError,
+  isElectricityMapsRequestError,
   LEGACY_ELECTRICITY_MAPS_SOURCE_ID,
   lastFullUtcDay,
   resetDefaultResolver,

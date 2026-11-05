@@ -25,7 +25,11 @@ How the current integration behaves (this is being replaced; see `docs/design/20
 - Values are memoised in memory per zone and period start for the lifetime of the process; nothing is persisted between runs.
 - The cloud-region to Electricity Maps zone mapping is maintained in each provider package.
 - Recommendations and lookup tables, which have no usage period of their own, use the intensity at midnight UTC at the start of the previous day.
-- If a request to Electricity Maps fails, CCF logs one warning for the region and uses the default emissions factors for it; the run continues.
+- If a request to Electricity Maps fails (a network error, a response that is not JSON, an invalid or expired token answered with HTTP 401, or a server error, HTTP 5xx), the estimate stops with an error and nothing is written to the estimates cache, so the next run asks again. This holds for AWS, Google Cloud and Azure billing data alike; Azure used to leave out the subscription instead. Recommendations handle a failed request as before:
+  - AWS recommendations fail the request.
+  - Google Cloud reports zero savings, with a warning, for each recommendation it costs individually. An idle IP address recommendation in a project with other costed recommendations fails the whole recommendations request.
+  - Azure Advisor leaves out the subscription's recommendations, with a warning.
+- If Electricity Maps answers without a value in any other way (for example an error response for a zone the token cannot access), CCF logs a warning and uses the default emissions factor for that row. Each row makes its own request and logs its own warning, and those rows are cached like any other.
 
 Here's how to configure CCF to use the Electricity Maps API:
 
@@ -46,11 +50,13 @@ Here's how to configure CCF to use the Electricity Maps API:
 
 ### Where each estimate's factor came from
 
-For AWS, Google Cloud and Azure, every service estimate in the API response carries a `provenance` object. It names the factor's source (`static` for the default factors, `electricitymaps-v3` when the Electricity Maps token is used) and the grid zone. It also gives the granularity, accounting basis and licence of the data, a quality tier from A (hourly data for hourly usage) to D (the static annual factors), and `gCO2ePerKWh`, the grid intensity applied to the row's energy. Alibaba Cloud and on-premise estimates do not carry it yet.
+AWS, Google Cloud and Azure service estimates computed from billing data (Cost and Usage Reports, the billing export and Consumption Management) carry a `provenance` object in the API response. It names the factor's source (`static` for the default factors, `electricitymaps-v3` when the Electricity Maps token is used) and the grid zone. It also gives the granularity, accounting basis and licence of the data, a quality tier from A (hourly data for hourly usage) to D (the static annual factors), and `gCO2ePerKWh`, the grid intensity applied to the row. A row's `kilowattHours` includes its embodied emissions converted to energy at that same factor, so for every row with a `co2e` value, `co2e` in tonnes is `kilowattHours` times `gCO2ePerKWh` divided by 1,000,000. (An AWS row whose instance type CCF cannot size has no `co2e`, an upstream limitation.)
+
+Estimates from the cloud usage APIs (billing data turned off), rows cached before the upgrade, and Alibaba Cloud and on-premise estimates do not carry it. Provenance roughly doubles the size of each service estimate in the API response and in the estimates cache, so about half as many rows fit within the response and cache size limits.
 
 ### Additional Notes
 
 - If you do not have access to the Electricity Maps API, you can still use CCF with the default emissions factors. Simply do not configure the tool to use the Electricity Maps API, and it will use the default factors instead.
-- If the API request fails, or is unable to map a given cloud region to Electricity Maps zone, then the app will fall back to the default emissions factors.
+- If Electricity Maps returns no value for a region, or the region has no Electricity Maps zone, the app falls back to the default emissions factors. A failed request stops the estimate instead (see above).
 - The Electricity Maps API free tier is for non-commercial use; commercial use requires a subscription. Check the terms that apply to your deployment before configuring a token.
 - For more information on the Electricity Maps API, please visit the [Electricity Maps API Documentation](https://app.electricitymaps.com/api/docs/reference).

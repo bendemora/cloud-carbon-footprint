@@ -86,7 +86,8 @@ export interface GridIntensitySource {
   /**
    * False for sources whose values come from code (the static tables): the
    * resolver neither reads nor writes the store for them, so stored copies
-   * cannot go stale when the tables change. Default true.
+   * cannot go stale when the tables change, and does not apply the 0 to 1500
+   * gCO2e/kWh bounds to their points. Default true.
    */
   readonly persist?: boolean
   probe(): Promise<SourceStatus>

@@ -56,6 +56,20 @@ describe('StaticSource', () => {
       )
     })
 
+    it('treats a zero factor as missing and maps the region to the Unknown entry, as estimateCo2 does', () => {
+      // GCP's carbon-free-energy table has europe-north2: 0, and estimateCo2
+      // applies `factors[region] || factors.Unknown`.
+      const source = createSource({
+        GCP: { factors: { 'europe-north2': 0, Unknown: 0.00018894 } },
+      })
+      expect(source.mapRegion('GCP', 'europe-north2')).toBe('gcp:Unknown')
+    })
+
+    it('returns null for a zero factor when the table has no Unknown entry', () => {
+      const source = createSource({ GCP: { factors: { 'europe-north2': 0 } } })
+      expect(source.mapRegion('GCP', 'europe-north2')).toBeNull()
+    })
+
     it('returns null for an unlisted region when the table has no Unknown entry', () => {
       expect(createSource().mapRegion('GCP', 'mars-north1')).toBeNull()
     })

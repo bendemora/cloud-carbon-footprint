@@ -21,6 +21,7 @@ import {
   ResolverLogger,
 } from './GridIntensityResolver'
 import {
+  appliedStaticFactor,
   StaticFactors,
   StaticFactorTable,
   StaticFactorTables,
@@ -149,15 +150,39 @@ export const lastFullUtcDay = (now: Date = new Date()): Period => {
 }
 
 let legacyLogger: ResolverLogger | undefined
-const legacyWarned = new Set<string>()
+
+/**
+ * A request to Electricity Maps failed (network error, a body that is not
+ * JSON, an invalid token, or a server error). It is named so that code which
+ * catches errors per account or subscription (Azure) can let it through and
+ * stop the run, as AWS and GCP do.
+ */
+export class ElectricityMapsRequestError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options)
+    this.name = 'ElectricityMapsRequestError'
+  }
+}
+
+/** By name as well as class, in case two copies of this package are loaded. */
+export const isElectricityMapsRequestError = (error: unknown): boolean =>
+  error instanceof ElectricityMapsRequestError ||
+  (error instanceof Error && error.name === 'ElectricityMapsRequestError')
 
 /**
  * The v3 lookup as getEmissionsFactors does it today: one hourly sample at
  * the start of the period. A sample applied to a longer period is labelled
- * estimated. Null when it did not produce a value, so the resolver decides.
+ * estimated. Null when it returned the static table (no zone for the region,
+ * or a response without a value, which getEmissionsFactors warns about), so
+ * the resolver decides.
+ *
+ * A failed request throws an ElectricityMapsRequestError, as getEmissionsFactors
+ * threw before this package existed, so the run stops and nothing is written
+ * to the estimates cache. Falling back instead would repeat the failing
+ * request for every billing row, and the cache would keep the static rows for
+ * good, because a cached day is never re-estimated.
  */
 const legacyElectricityMapsLookup = async (
-  provider: CloudProvider,
   region: string,
   periodStart: Date,
   periodEnd: Date,
@@ -176,14 +201,9 @@ const legacyElectricityMapsLookup = async (
       logger as Logger,
     )
   } catch (error) {
-    const id = `${provider}|${region}`
-    if (!legacyWarned.has(id)) {
-      legacyWarned.add(id)
-      logger.warn(
-        `${(error as Error).message} Using the configured grid intensity sources for ${provider} region ${region} instead.`,
-      )
-    }
-    return null
+    throw new ElectricityMapsRequestError((error as Error).message, {
+      cause: error,
+    })
   }
   if (factors === staticFactors) return null
   const usageGranularity = usageGranularityOf(periodStart, periodEnd)
@@ -235,7 +255,6 @@ export const resolveEmissionsFactors = async (
     configLoader().ELECTRICITY_MAPS_TOKEN
   ) {
     const legacy = await legacyElectricityMapsLookup(
-      provider,
       region,
       periodStart,
       periodEnd,
@@ -272,10 +291,7 @@ export const resolveEmissionsFactors = async (
       region,
     )
     const factors = factorsOf(staticTable)
-    // The factor estimateCo2 will apply: the region's, else the table's Unknown.
-    const applied = Object.hasOwn(factors, region)
-      ? factors[region]
-      : factors.Unknown
+    const applied = appliedStaticFactor(factors, region)
     return {
       factors,
       provenance: {
