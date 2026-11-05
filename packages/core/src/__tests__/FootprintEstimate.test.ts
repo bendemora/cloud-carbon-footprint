@@ -8,6 +8,7 @@ import FootprintEstimate, {
   aggregateEstimatesByDay,
   appendOrAccumulateEstimatesByDay,
   estimateCo2,
+  estimateKwh,
   getWattsByAverageOrMedian,
   MutableServiceEstimate,
 } from '../FootprintEstimate'
@@ -541,6 +542,25 @@ describe('FootprintEstimate', () => {
     it('estimates CO2e for unknown region', () => {
       const result = estimateCo2(2, 'someRegion', emissionsFactors)
       expect(result).toEqual(6)
+    })
+
+    it('estimates 0 when the region and Unknown factors are both 0', () => {
+      expect(estimateCo2(2, 'zero', { zero: 0, Unknown: 0 })).toEqual(0)
+    })
+  })
+
+  describe('estimateKwh', () => {
+    it('converts CO2e to kWh at the region factor, times the replication factor', () => {
+      expect(estimateKwh(4, 'testRegion', { testRegion: 2 }, 3)).toEqual(6)
+    })
+
+    it('converts at the Unknown factor for an unknown region', () => {
+      expect(estimateKwh(6, 'someRegion', { Unknown: 3 })).toEqual(2)
+    })
+
+    it('gives 0 kWh, not Infinity or NaN, when there is no non-zero factor', () => {
+      expect(estimateKwh(4, 'zero', { zero: 0, Unknown: 0 })).toEqual(0)
+      expect(estimateKwh(4, 'missing', {})).toEqual(0)
     })
   })
 })
