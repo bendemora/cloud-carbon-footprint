@@ -12,9 +12,11 @@ const seriesId = (
 ): string => `${sourceId}|${zoneId}|${granularity}`
 
 /**
- * Keeps points for the lifetime of the process. Used in tests, as the store
- * for sources whose retention is 'session', and until the LOCAL and MONGODB
- * stores (section 6.6) are configured.
+ * Keeps points for the lifetime of the process. The resolver's default
+ * store, used in tests, and the fallback when GRID_INTENSITY_STORE is
+ * MONGODB but the MongoDB settings are missing or invalid, or the mode is
+ * unknown. The resolver writes no points for sources whose retention is
+ * 'session', to any store, so it fetches those again on every resolve call.
  */
 export class InMemoryIntensityStore implements IntensityStore {
   private readonly series = new Map<string, Map<number, IntensityPoint>>()

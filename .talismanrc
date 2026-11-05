@@ -210,7 +210,7 @@ fileignoreconfig:
 - filename: packages/azure/package.json
   checksum: 5059b9e6c08f6482b208ff4a5c3189873868a82cabdd4a089d7efe64eafd004a
 - filename: packages/azure/src/__tests__/AzureAccount.test.ts
-  checksum: dee36b802e3a6fbae27fe043dfb0f364abdef6f54581c10e3f147b4199cbae47
+  checksum: e3eb69a5593b4df3eec3de2e844a377753818e0208f24f7131ae0154f4d2a9ec
 - filename: packages/azure/src/__tests__/AzureCredentialsProvider.test.ts
   checksum: 4719d9bfa50789868066ca218f2202a316aaa70904a4152c2a5dfde80f11ba80
 - filename: packages/azure/src/__tests__/ConsumptionManagement.test.ts
@@ -492,10 +492,14 @@ fileignoreconfig:
   checksum: 1f12bbb3fcb87debd6463cc3d5eb46ff5848d21b492993f92bf408dcf6007b94
 - filename: packages/grid-intensity/src/__tests__/MongoDbIntensityStore.test.ts
   checksum: 8ba5b285bcf876fa065f297322c822badb1d70099552bdb28e5a6e691087504d
-- filename: packages/grid-intensity/src/__tests__/createIntensityStore.test.ts
-  checksum: b177c151a6e59aad74a085f59480d2e5b0c47e439da590790b0be957a6ee665a
 - filename: packages/grid-intensity/src/stores/MongoDbIntensityStore.ts
   checksum: efd342424c133d97e5c209eb8054f509a1296f8ba62c50f81fdffc5c74e3dab0
+- filename: .changeset/phase1-review-fixes.md
+  checksum: 9df23b2bba88eb37beccca4fb0a30e949eef3eca854e03661f0cbebce552a3d3
+- filename: packages/grid-intensity/src/stores/createIntensityStore.ts
+  checksum: ba8f026843b80a390e7d4e9d570e35628ce72f2f9078ba96a9aec576f2bb7910
+- filename: packages/grid-intensity/src/__tests__/createIntensityStore.test.ts
+  checksum: 313e399f02ec16d57fd0d30984a705fed08a3c9f0d7cd8f7687c0eebe065afb4
 scopeconfig:
 - scope: node
 version: "1.0"

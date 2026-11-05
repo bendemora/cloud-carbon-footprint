@@ -35,7 +35,7 @@
     "build:tsc": "tsc --build tsconfig.json",
     "view:coverage": "serve coverage/lcov-report",
     "clean": "rimraf dist && rimraf coverage && rimraf logs",
-    "lint": "eslint '*/**/*.ts' --quiet",
+    "lint": "tsc -p tsconfig.test.json && eslint '*/**/*.ts' --quiet",
     "lint:fix": "eslint '*/**/*.ts' --quiet --fix"
   },
   "dependencies": {

@@ -48,7 +48,13 @@ export interface Provenance {
   isEstimated: boolean
   licenceId: LicenceId
   qualityTier: QualityTier
-  /** The grid intensity applied to the row's operational energy, gCO2e/kWh. */
+  /**
+   * The grid intensity applied to the row, gCO2e/kWh. The row's
+   * kilowattHours includes embodied emissions converted to energy at this
+   * same factor, so for a row with a co2e value, co2e (tonnes) is
+   * kilowattHours x gCO2ePerKWh / 1e6; it is not an intensity of operational
+   * energy alone.
+   */
   gCO2ePerKWh: number
   /** CCF energy model version (section 9). */
   modelVersion: string

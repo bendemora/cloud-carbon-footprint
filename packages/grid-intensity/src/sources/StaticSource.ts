@@ -47,8 +47,12 @@ const GRANULARITY: Granularity = 'year'
  * and are given to the constructor, so this package does not depend on them.
  *
  * Zones are named '<provider>:<region>' in lower-case provider form, for
- * example 'aws:eu-west-2'. A region missing from a table maps to the table's
- * 'Unknown' entry, which matches what estimateCo2 in packages/core does today.
+ * example 'aws:eu-west-2'. A region missing from a table, or whose factor is
+ * 0, maps to the table's 'Unknown' entry. That matches estimateCo2 in
+ * packages/core, which applies `factors[region] || factors.Unknown`, so the
+ * provenance names the factor actually applied. GCP's carbon-free-energy
+ * table has a 0 for europe-north2 (Google reports it fully carbon-free);
+ * estimateCo2 applying the Unknown average there is an upstream overestimate.
  */
 export class StaticSource implements GridIntensitySource {
   readonly id = STATIC_SOURCE_ID
@@ -75,7 +79,7 @@ export class StaticSource implements GridIntensitySource {
   mapRegion(provider: CloudProvider, region: string): string | null {
     const factors = this.factorsFor(provider)
     if (!factors) return null
-    if (Object.hasOwn(factors, region)) return zoneId(provider, region)
+    if (hasFactor(factors, region)) return zoneId(provider, region)
     if (Object.hasOwn(factors, UNKNOWN_REGION))
       return zoneId(provider, UNKNOWN_REGION)
     return null
@@ -163,3 +167,18 @@ const PROVIDERS_BY_ZONE_PREFIX: Record<string, CloudProvider> =
 
 const zoneId = (provider: CloudProvider, region: string): string =>
   `${provider.toLowerCase()}:${region}`
+
+/** Whether estimateCo2 would apply the region's own factor. */
+const hasFactor = (factors: StaticFactors, region: string): boolean =>
+  Object.hasOwn(factors, region) && Boolean(factors[region])
+
+/**
+ * The factor estimateCo2 in packages/core applies for a region: its own when
+ * it has a non-zero one, else the table's Unknown entry. Undefined when the
+ * table has neither.
+ */
+export const appliedStaticFactor = (
+  factors: StaticFactors,
+  region: string,
+): number | undefined =>
+  hasFactor(factors, region) ? factors[region] : factors[UNKNOWN_REGION]
