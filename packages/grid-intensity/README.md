@@ -11,11 +11,11 @@ Phase 1. This package contains:
 - The interfaces from section 6.1 of the design (`GridIntensitySource`, `IntensityStore`, `IntensityResolver`, `IntensityPoint`, `Provenance`, licence and capability types).
 - `StaticSource`: the CCF static annual factors as a source. Always available, quality tier D. The factor tables stay in the provider packages and are given to the constructor, so this package depends on no provider package.
 - `GridIntensityResolver`: the resolution policy from section 6.2. Sources are tried in configured order; those that cannot deliver data at least as fine as the usage period are tried only after the others, finest first. Commercial, non-commercial and custom licences need an operator acknowledgement. Stored points are read first and only missing periods are fetched. Failures are logged once per source and zone, negative-cached for the capability TTL, and never abort a run.
-- `InMemoryIntensityStore`. The LOCAL and MONGODB stores (section 6.6) come next.
-- `resolveEmissionsFactors`: the adapter the provider packages will call in place of `getEmissionsFactors`. It builds a default resolver from `GRID_INTENSITY_SOURCES`, `GRID_INTENSITY_LICENCE_ACKNOWLEDGEMENTS` and `GRID_INTENSITY_CAPABILITY_TTL_HOURS`. When the static source is used, it returns the caller's table unchanged, so estimates stay identical to today's.
+- Stores (section 6.6): `LocalIntensityStore` (one JSON file per source, zone, granularity and month under `GRID_INTENSITY_STORE_PATH`), `MongoDbIntensityStore` (collection `grid-intensity-points` in the `ccf` database, using `MONGODB_URI`), and `InMemoryIntensityStore`. The static source is never stored. Store files may hold licensed data: `.ccf/` is in `.gitignore`.
+- `resolveEmissionsFactors`: the adapter the provider packages will call in place of `getEmissionsFactors`. It builds a default resolver and store from the configuration below. When the static source is used, it returns the caller's table unchanged, so estimates stay identical to today's. `shutdownDefaultResolver()` closes the store at the end of a run.
 - `deriveQualityTier` (section 6.4), `requiresAcknowledgement` (section 6.3), UTC period helpers, time-weighting and tCO2e/gCO2e conversions.
 
-Not yet here: the Electricity Maps v4 source, the LOCAL and MONGODB stores, provenance on `ServiceData` and the wiring into the provider packages, the doctor command and the capabilities endpoint. Nothing in the estimation path uses this package yet.
+Not yet here: the Electricity Maps v4 source, provenance on `ServiceData` and the wiring into the provider packages, the doctor command and the capabilities endpoint. Nothing in the estimation path uses this package yet.
 
 ## Configuration
 

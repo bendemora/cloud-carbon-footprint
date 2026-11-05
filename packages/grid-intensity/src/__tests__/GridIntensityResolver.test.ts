@@ -382,6 +382,24 @@ describe('GridIntensityResolver', () => {
       ).resolves.toEqual([])
     })
 
+    it('neither reads nor writes the store for the static source', async () => {
+      const store: IntensityStore = {
+        get: jest.fn().mockResolvedValue([]),
+        put: jest.fn(),
+        purge: jest.fn(),
+      }
+      const { resolver } = createResolver({ sources: [staticSource()], store })
+      const result = await resolver.resolve(
+        'AWS',
+        'eu-west-2',
+        DAY_START,
+        DAY_END,
+      )
+      expect(result.gCO2ePerKWh).toBe(305)
+      expect(store.get).not.toHaveBeenCalled()
+      expect(store.put).not.toHaveBeenCalled()
+    })
+
     it('carries on without the store when it fails, warning once', async () => {
       const failingStore: IntensityStore = {
         get: jest.fn().mockRejectedValue(new Error('disk full')),

@@ -37,5 +37,16 @@ export type {
 export {
   resetDefaultResolver,
   resolveEmissionsFactors,
+  shutdownDefaultResolver,
 } from './resolveEmissionsFactors'
+export {
+  DEFAULT_STORE_PATH,
+  LocalIntensityStore,
+} from './stores/LocalIntensityStore'
+export {
+  MONGODB_COLLECTION,
+  MONGODB_DATABASE,
+  MongoDbIntensityStore,
+} from './stores/MongoDbIntensityStore'
+export { createIntensityStore } from './stores/createIntensityStore'
 export type { EmissionsFactorsResolution } from './resolveEmissionsFactors'

@@ -274,6 +274,9 @@ terraform/.terraform/
 #TestCafe
 screenshots
 
+# Grid intensity store (may hold licensed data; never commit)
+.ccf/
+
 #Create App
 packages/create-app/ccf-app
 

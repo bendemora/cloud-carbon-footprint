@@ -490,6 +490,12 @@ fileignoreconfig:
   checksum: 45284a826ebfb0c0f0b32ac161f5cab278b4f0516230f3dfbaf1990a764057d2
 - filename: wn-parrots-hug.md
   checksum: 1f12bbb3fcb87debd6463cc3d5eb46ff5848d21b492993f92bf408dcf6007b94
+- filename: packages/grid-intensity/src/__tests__/MongoDbIntensityStore.test.ts
+  checksum: 8ba5b285bcf876fa065f297322c822badb1d70099552bdb28e5a6e691087504d
+- filename: packages/grid-intensity/src/__tests__/createIntensityStore.test.ts
+  checksum: b177c151a6e59aad74a085f59480d2e5b0c47e439da590790b0be957a6ee665a
+- filename: packages/grid-intensity/src/stores/MongoDbIntensityStore.ts
+  checksum: efd342424c133d97e5c209eb8054f509a1296f8ba62c50f81fdffc5c74e3dab0
 scopeconfig:
 - scope: node
 version: "1.0"
