@@ -1,5 +1,25 @@
 # @cloud-carbon-footprint/gcp
 
+## 1.1.0
+
+### Minor Changes
+
+- 6436ef8: The AWS, GCP and Azure packages resolve grid intensity through `resolveEmissionsFactors` from `@cloud-carbon-footprint/grid-intensity` instead of `getEmissionsFactors`. With the default configuration, estimates are unchanged. With `ELECTRICITY_MAPS_TOKEN` set, the existing Electricity Maps v3 lookup is still used, with one difference: recommendations and lookup tables use the previous UTC day instead of the current hour. A failed request still stops the run and nothing is written to the estimates cache, as before; Azure now stops too instead of leaving out the subscription. The CLI and the API's shutdown handler close the grid intensity store.
+- fd33210: Service estimates carry provenance. `ServiceData` and `FootprintEstimate` gain an optional `provenance` (source, grid zone, granularity, basis, factor type, estimated flag, licence, quality tier, the gCO2e/kWh applied, model version). The `Provenance` type and its literal types now live in `common` and are re-exported by `grid-intensity`; `Provenance` gains `gCO2ePerKWh`. AWS, GCP and Azure attach it to every billing row. Unknown-usage rows now resolve grid intensity like other rows; with the default configuration this changes nothing, and with `ELECTRICITY_MAPS_TOKEN` set they now use the same Electricity Maps value as the known rows of the same region and day instead of the static factor. `common` and `core` take a major bump, as the design specifies for packages whose public types gained provenance fields. Provenance roughly doubles the size of each service estimate in API responses and in the estimates cache (about 250 more bytes of JSON per row with the default factors). With the LOCAL or GCS cache, one period's estimates must still fit in one string of about 512 MiB, so that limit falls from about 2.3 million rows to about 1.1 million; the API response and the MongoDB cache no longer have a limit of this kind.
+
+### Patch Changes
+
+- Updated dependencies [1031ced]
+- Updated dependencies [e53ad22]
+- Updated dependencies [fd49e2b]
+- Updated dependencies [241cdd9]
+- Updated dependencies [6436ef8]
+- Updated dependencies [be5c136]
+- Updated dependencies [fd33210]
+  - @cloud-carbon-footprint/core@2.0.0
+  - @cloud-carbon-footprint/grid-intensity@0.1.0
+  - @cloud-carbon-footprint/common@3.0.0
+
 ## 1.0.0
 
 ### Major Changes

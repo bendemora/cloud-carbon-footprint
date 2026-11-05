@@ -1,5 +1,22 @@
 # @cloud-carbon-footprint/app
 
+## 2.0.1
+
+### Patch Changes
+
+- 552dd82: Large estimate sets no longer fail on output size, which provenance on every row had made about twice as likely. The MongoDB cache now returns stored rows one document each and groups them by timestamp in Node instead of with `$group`, so the rows of one timestamp no longer have to fit in one 16 MiB MongoDB document (with provenance that capped a page at about 34,000 rows of one day, against about 71,000 before). When loading estimates from MongoDB fails, `MongoDbCacheManager.getEstimates` now throws and the API answers HTTP 500, instead of logging a warning and answering 200 with an empty list. The `/footprint` response is streamed one service estimate at a time instead of built with `res.json`, so it is no longer limited by the longest string Node can hold (about 512 MiB, about 1.1 million rows with provenance); the response text is unchanged, and it is now sent with chunked transfer encoding and without an ETag. LOCAL and GCS cache writes are gathered in windows of about 16 MiB instead of 100 estimation results, so they no longer fail when 100 periods together pass that string limit; one period's estimates must still fit in one string, as each is one line of the cache file. Estimates themselves are unchanged.
+- Updated dependencies [fd49e2b]
+- Updated dependencies [241cdd9]
+- Updated dependencies [6436ef8]
+- Updated dependencies [be5c136]
+- Updated dependencies [fd33210]
+  - @cloud-carbon-footprint/common@3.0.0
+  - @cloud-carbon-footprint/aws@1.1.0
+  - @cloud-carbon-footprint/gcp@1.1.0
+  - @cloud-carbon-footprint/azure@2.1.0
+  - @cloud-carbon-footprint/ali@1.0.1
+  - @cloud-carbon-footprint/on-premise@1.0.1
+
 ## 2.0.0
 
 ### Major Changes

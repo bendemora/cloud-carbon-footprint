@@ -1,5 +1,21 @@
 # @cloud-carbon-footprint/core
 
+## 2.0.0
+
+### Major Changes
+
+- fd33210: Service estimates carry provenance. `ServiceData` and `FootprintEstimate` gain an optional `provenance` (source, grid zone, granularity, basis, factor type, estimated flag, licence, quality tier, the gCO2e/kWh applied, model version). The `Provenance` type and its literal types now live in `common` and are re-exported by `grid-intensity`; `Provenance` gains `gCO2ePerKWh`. AWS, GCP and Azure attach it to every billing row. Unknown-usage rows now resolve grid intensity like other rows; with the default configuration this changes nothing, and with `ELECTRICITY_MAPS_TOKEN` set they now use the same Electricity Maps value as the known rows of the same region and day instead of the static factor. `common` and `core` take a major bump, as the design specifies for packages whose public types gained provenance fields. Provenance roughly doubles the size of each service estimate in API responses and in the estimates cache (about 250 more bytes of JSON per row with the default factors). With the LOCAL or GCS cache, one period's estimates must still fit in one string of about 512 MiB, so that limit falls from about 2.3 million rows to about 1.1 million; the API response and the MongoDB cache no longer have a limit of this kind.
+
+### Patch Changes
+
+- 1031ced: core: `estimateKwh` returns 0 kWh instead of Infinity or NaN when neither the region nor `Unknown` has a non-zero factor, so embodied emissions in a zone at 0 gCO2e/kWh no longer turn the row's kWh into Infinity. Results for any non-zero factor are unchanged.
+- be5c136: Fixes from a review of the Phase 1 grid intensity work. With `ELECTRICITY_MAPS_TOKEN` set, an invalid token (HTTP 401 with `Invalid auth-token`) or an Electricity Maps server error (HTTP 5xx) now fails the request like a network error, instead of falling back to the default factors row by row and caching those rows. A 401 for a zone or endpoint the token has no access to still falls back for that zone, as before; the error is an `ElectricityMapsRequestError`, and Azure no longer skips the subscription when it sees one, so the run stops and nothing partial is cached. A region whose static factor is 0 (GCP `europe-north2` with `GCP_USE_CARBON_FREE_ENERGY_PERCENTAGE=true`) now gets provenance for the Unknown zone and factor that `estimateCo2` applies, instead of 0 gCO2e/kWh; the estimate itself is unchanged. The static factors are no longer checked against the 0 to 1500 gCO2e/kWh bounds meant for fetched data, which logged a misleading "Dropped 1 point" warning for GCP multi-regions; estimates are unchanged. With `GRID_INTENSITY_STORE=MONGODB`, a malformed `MONGODB_URI` or a missing `MONGODB_CREDENTIALS` file now logs a warning, without the user name or password from `MONGODB_URI`, and keeps points in memory instead of failing every AWS, GCP and Azure estimate. When rows with different provenance are merged into one service estimate, the merged row takes the more restrictive of their licences. The API's deployment package now includes `grid-intensity` instead of expecting it from npm.
+- Updated dependencies [fd49e2b]
+- Updated dependencies [241cdd9]
+- Updated dependencies [be5c136]
+- Updated dependencies [fd33210]
+  - @cloud-carbon-footprint/common@3.0.0
+
 ## 1.0.0
 
 ### Major Changes
