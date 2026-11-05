@@ -36,7 +36,8 @@ export const startOfPeriod = (date: Date, granularity: Granularity): Date => {
   }
 }
 
-const addUtcMonths = (date: Date, months: number): Date => {
+/** `date` plus a number of calendar months in UTC, clamped to the month end. */
+export const addUtcMonths = (date: Date, months: number): Date => {
   const target = new Date(date.getTime())
   const totalMonths = date.getUTCMonth() + months
   const year = date.getUTCFullYear() + Math.floor(totalMonths / 12)

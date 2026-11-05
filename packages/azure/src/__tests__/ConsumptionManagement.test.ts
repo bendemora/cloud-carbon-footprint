@@ -37,9 +37,26 @@ import {
 } from './fixtures/consumptionManagement.fixtures'
 
 import { ConsumptionManagementService } from '../lib'
-import { AZURE_CLOUD_CONSTANTS } from '../domain'
+import {
+  AZURE_CLOUD_CONSTANTS,
+  AZURE_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
+} from '../domain'
+import { AZURE_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES } from '../lib/AzureRegions'
 
 const mockUsageDetails = { list: jest.fn() }
+
+// Records the grid intensity calls and delegates to the real adapter.
+const mockResolveCalls: unknown[][] = []
+jest.mock('@cloud-carbon-footprint/grid-intensity', () => {
+  const actual = jest.requireActual('@cloud-carbon-footprint/grid-intensity')
+  return {
+    ...actual,
+    resolveEmissionsFactors: (...args: unknown[]) => {
+      mockResolveCalls.push(args)
+      return actual.resolveEmissionsFactors(...args)
+    },
+  }
+})
 
 jest.mock('@cloud-carbon-footprint/common', () => ({
   ...(jest.requireActual('@cloud-carbon-footprint/common') as Record<
@@ -227,6 +244,54 @@ describe('Azure Consumption Management Service', () => {
       },
     ]
     expect(result).toEqual(expectedResult)
+  })
+
+  it("resolves grid intensity over each usage row's period with the Azure table", async () => {
+    mockUsageDetails.list.mockReturnValue(
+      mockIterableResponse(mockConsumptionManagementResponseOne),
+    )
+    mockResolveCalls.length = 0
+
+    await new ConsumptionManagementService(
+      new ComputeEstimator(),
+      new StorageEstimator(AZURE_CLOUD_CONSTANTS.SSDCOEFFICIENT),
+      new StorageEstimator(AZURE_CLOUD_CONSTANTS.HDDCOEFFICIENT),
+      new NetworkingEstimator(AZURE_CLOUD_CONSTANTS.NETWORKING_COEFFICIENT),
+      new MemoryEstimator(AZURE_CLOUD_CONSTANTS.MEMORY_COEFFICIENT),
+      new UnknownEstimator(AZURE_CLOUD_CONSTANTS.ESTIMATE_UNKNOWN_USAGE_BY),
+      new EmbodiedEmissionsEstimator(
+        AZURE_CLOUD_CONSTANTS.SERVER_EXPECTED_LIFESPAN,
+      ),
+      new ConsumptionManagementClient(mockCredentials, subscriptionId),
+    ).getEstimates(startDate, endDate, grouping)
+
+    expect(mockResolveCalls.length).toBeGreaterThan(0)
+    for (const [
+      provider,
+      region,
+      start,
+      end,
+      table,
+      options,
+    ] of mockResolveCalls as [
+      string,
+      string,
+      Date,
+      Date,
+      unknown,
+      { legacyElectricityMapsZones: unknown },
+    ][]) {
+      expect(provider).toBe('AZURE')
+      expect(region).toEqual(expect.any(String))
+      // a day grouping: one whole day from the row's timestamp, exclusive end
+      expect(end.getTime() - start.getTime()).toBe(24 * 60 * 60 * 1000)
+      expect(table).toEqual({
+        factors: AZURE_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
+      })
+      expect(options.legacyElectricityMapsZones).toBe(
+        AZURE_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
+      )
+    }
   })
 
   it('Returns estimates for Storage', async () => {

@@ -7,6 +7,7 @@ export type * from './types'
 export {
   GRANULARITIES,
   addPeriod,
+  addUtcMonths,
   isAtLeastAsFine,
   periodsCovering,
   startOfPeriod,
@@ -35,9 +36,12 @@ export type {
   ResolverLogger,
 } from './GridIntensityResolver'
 export {
+  LEGACY_ELECTRICITY_MAPS_SOURCE_ID,
+  lastFullUtcDay,
   resetDefaultResolver,
   resolveEmissionsFactors,
   shutdownDefaultResolver,
+  usagePeriod,
 } from './resolveEmissionsFactors'
 export {
   DEFAULT_STORE_PATH,
@@ -49,4 +53,7 @@ export {
   MongoDbIntensityStore,
 } from './stores/MongoDbIntensityStore'
 export { createIntensityStore } from './stores/createIntensityStore'
-export type { EmissionsFactorsResolution } from './resolveEmissionsFactors'
+export type {
+  EmissionsFactorsResolution,
+  ResolveEmissionsFactorsOptions,
+} from './resolveEmissionsFactors'

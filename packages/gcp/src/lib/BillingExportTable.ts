@@ -12,7 +12,6 @@ import {
   convertByteSecondsToTerabyteHours,
   convertBytesToGigabytes,
   EstimationResult,
-  getEmissionsFactors,
   AccountDetailsOrIdList,
   GroupBy,
   Logger,
@@ -21,6 +20,11 @@ import {
   TagCollection,
   buildAccountFilter,
 } from '@cloud-carbon-footprint/common'
+import {
+  lastFullUtcDay,
+  resolveEmissionsFactors,
+  usagePeriod,
+} from '@cloud-carbon-footprint/grid-intensity'
 
 import {
   accumulateKilowattHours,
@@ -111,14 +115,19 @@ export default class BillingExportTable {
       usageRow.tags = this.rawTagsToTagCollection(usageRow)
       const billingExportRow = new BillingExportRow(usageRow)
 
-      const emissionsFactors: CloudConstantsEmissionsFactors =
-        await getEmissionsFactors(
-          billingExportRow.region,
-          billingExportRow.timestamp.toISOString(),
-          getGCPEmissionsFactors(),
-          GCP_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-          this.billingExportTableLogger,
-        )
+      const period = usagePeriod(billingExportRow.timestamp, grouping)
+      const { factors: emissionsFactors } = await resolveEmissionsFactors(
+        'GCP',
+        billingExportRow.region,
+        period.start,
+        period.end,
+        { factors: getGCPEmissionsFactors },
+        {
+          legacyElectricityMapsZones:
+            GCP_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
+          logger: this.billingExportTableLogger,
+        },
+      )
 
       const footprintEstimate = this.getFootprintEstimateFromUsageRow(
         billingExportRow,
@@ -181,15 +190,19 @@ export default class BillingExportTable {
         billingExportRow.vCpuHours = instancevCpu * billingExportRow.vCpuHours
       }
 
-      const dateTime = new Date().toISOString()
-      const emissionsFactors: CloudConstantsEmissionsFactors =
-        await getEmissionsFactors(
-          billingExportRow.region,
-          dateTime,
-          getGCPEmissionsFactors(),
-          GCP_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-          this.billingExportTableLogger,
-        )
+      const period = lastFullUtcDay()
+      const { factors: emissionsFactors } = await resolveEmissionsFactors(
+        'GCP',
+        billingExportRow.region,
+        period.start,
+        period.end,
+        { factors: getGCPEmissionsFactors },
+        {
+          legacyElectricityMapsZones:
+            GCP_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
+          logger: this.billingExportTableLogger,
+        },
+      )
 
       const footprintEstimate = this.getFootprintEstimateFromUsageRow(
         billingExportRow,
