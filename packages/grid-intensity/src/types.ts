@@ -176,5 +176,13 @@ export interface IntensityResolver {
     start: Date,
     end: Date,
   ): Promise<ResolvedIntensity>
+}
+
+/**
+ * Builds the doctor report. Separate from IntensityResolver because the list
+ * of provider regions to report on comes from the app layer, which knows every
+ * provider's static table.
+ */
+export interface CapabilityReporter {
   capabilities(): Promise<CapabilityReport>
 }

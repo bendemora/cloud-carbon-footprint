@@ -254,6 +254,13 @@ export async function resolveEmissionsFactors(
 // factors = { [region]: gCO2ePerKWh / 1e6 }  (tCO2e/kWh, what estimateCo2 expects)
 ```
 
+Implementation notes (Phase 1, recorded as the code landed):
+
+- `resolveEmissionsFactors` takes a fifth argument, the caller's static table (`StaticFactorTable`: the factors, or a function returning them, plus the table's basis and factor type), and an optional resolver for tests. The static tables stay in the provider packages, so `grid-intensity` does not depend on them. When the static source is used, or no source can serve the region, the caller's table is returned unchanged, so tier-D estimates are identical to today's.
+- `capabilities()` moved from `IntensityResolver` to a separate `CapabilityReporter` interface, implemented with the doctor command, because the list of provider regions to report on comes from the app layer.
+- When every source is coarser than the usage period, the fallback round tries the finest first (a live monthly value beats the static annual one), keeping the configured order for ties.
+- A fetched period with gaps is averaged over the covered part and marked `isEstimated` (tier C); points outside 0 to 1,500 gCO2e/kWh are dropped with a warning.
+
 ### 6.2 Resolution policy
 
 `GRID_INTENSITY_SOURCES` is an ordered list, for example `electricitymaps,neso,entsoe,eia,file,static`. For each (provider, region, period):

@@ -8,6 +8,7 @@ import {
   isAtLeastAsFine,
   periodsCovering,
   startOfPeriod,
+  usageGranularityOf,
 } from '../granularity'
 
 const utc = (iso: string) => new Date(iso)
@@ -95,5 +96,17 @@ describe('periodsCovering', () => {
   it('returns no periods for an empty range that starts mid-period', () => {
     const t = utc('2026-03-15T13:45:00.000Z')
     expect(periodsCovering(t, t, 'year')).toEqual([])
+  })
+})
+
+describe('usageGranularityOf', () => {
+  it.each([
+    ['2026-01-01T00:00:00.000Z', '2026-01-01T01:00:00.000Z', 'hour'],
+    ['2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z', 'day'],
+    ['2026-01-01T00:00:00.000Z', '2026-01-08T00:00:00.000Z', 'month'],
+    ['2026-01-01T00:00:00.000Z', '2026-02-01T00:00:00.000Z', 'month'],
+    ['2026-01-01T00:00:00.000Z', '2026-04-01T00:00:00.000Z', 'year'],
+  ] as const)('[%s, %s) is %s-sized', (start, end, expected) => {
+    expect(usageGranularityOf(utc(start), utc(end))).toBe(expected)
   })
 })
