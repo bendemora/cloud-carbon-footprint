@@ -14,12 +14,26 @@ import {
 import { EstimationRequest } from '../CreateValidRequest'
 import R from 'ramda'
 
-const DATA_WINDOW_SIZE = 100 // this roughly means 100 days per loop
+/**
+ * Characters of serialised estimation results to gather before each write.
+ * Sizing windows by length rather than by a count of results keeps every
+ * string well below the longest string Node can hold (about 512 MiB), however
+ * many rows each period has.
+ */
+export const CACHE_WRITE_WINDOW_CHARS = 16 * 1024 * 1024
 
+/**
+ * Writes the estimates as a cache file: a JSON array with one estimation
+ * result per line, the format getCachedData reads. Results are written in
+ * windows of at least windowChars characters (the last may be shorter); a
+ * result longer than that is written in a window of its own. One result must
+ * still fit in one string, as getCachedData reads it back as one line.
+ */
 export const writeToFile = async (
   writeStream: any,
   mergedData: EstimationResult[],
   fh?: FileHandle,
+  windowChars = CACHE_WRITE_WINDOW_CHARS,
 ) => {
   const OPEN_BRACKET = '[' + '\n'
   const CLOSE_BRACKET = '\n' + ']'
@@ -34,15 +48,14 @@ export const writeToFile = async (
   }
 
   await writeIt(OPEN_BRACKET) // beginning of the cache file
-  for (let i = 0; i < mergedData.length; i += DATA_WINDOW_SIZE) {
-    await writeIt(
-      mergedData
-        .slice(i, i + DATA_WINDOW_SIZE)
-        .map((el) => JSON.stringify(el))
-        .join(COMMA_SEPARATOR),
-    ) // write a DATA_WINDOW_SIZE amount of data
-    if (i + DATA_WINDOW_SIZE < mergedData.length) {
-      await writeIt(COMMA_SEPARATOR)
+  let window = ''
+  for (let i = 0; i < mergedData.length; i++) {
+    window += (window ? COMMA_SEPARATOR : '') + JSON.stringify(mergedData[i])
+    const isLast = i === mergedData.length - 1
+    if (window.length >= windowChars || isLast) {
+      await writeIt(window)
+      window = ''
+      if (!isLast) await writeIt(COMMA_SEPARATOR)
     }
   }
   await writeIt(CLOSE_BRACKET) // end of the cache file
