@@ -44,6 +44,10 @@ Here's how to configure CCF to use the Electricity Maps API:
 
 4. **Run CCF**: Once you have configured CCF to use the Electricity Maps API, you can run the tool as you normally would. CCF will now use the Electricity Maps API to obtain carbon intensity factors for each region.
 
+### Where each estimate's factor came from
+
+For AWS, Google Cloud and Azure, every service estimate in the API response carries a `provenance` object. It names the factor's source (`static` for the default factors, `electricitymaps-v3` when the Electricity Maps token is used) and the grid zone. It also gives the granularity, accounting basis and licence of the data, a quality tier from A (hourly data for hourly usage) to D (the static annual factors), and `gCO2ePerKWh`, the grid intensity applied to the row's energy. Alibaba Cloud and on-premise estimates do not carry it yet.
+
 ### Additional Notes
 
 - If you do not have access to the Electricity Maps API, you can still use CCF with the default emissions factors. Simply do not configure the tool to use the Electricity Maps API, and it will use the default factors instead.

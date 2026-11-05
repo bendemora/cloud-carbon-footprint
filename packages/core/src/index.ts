@@ -17,6 +17,7 @@ export {
   ReplicationFactorsForService,
 } from './CloudConstantsTypes'
 export { US_NERC_REGIONS_EMISSIONS_FACTORS } from './FootprintEstimationConstants'
+export { mergeProvenance } from './provenance'
 export { default as UsageData } from './IUsageData'
 export {
   default as FootprintEstimate,

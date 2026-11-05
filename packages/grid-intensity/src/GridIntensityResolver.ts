@@ -261,6 +261,7 @@ export class GridIntensityResolver implements IntensityResolver {
           intensityGranularity: granularity,
           usageGranularity,
         }),
+        gCO2ePerKWh: mean.gCO2ePerKWh,
         modelVersion: this.modelVersion,
       },
     }

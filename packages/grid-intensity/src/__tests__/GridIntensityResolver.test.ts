@@ -63,6 +63,7 @@ describe('GridIntensityResolver', () => {
         isEstimated: false,
         licenceId: 'open-attribution',
         qualityTier: 'D',
+        gCO2ePerKWh: 305,
         modelVersion: 'unversioned',
       })
     })
@@ -120,6 +121,7 @@ describe('GridIntensityResolver', () => {
       expect(result.provenance).toMatchObject({
         granularity: 'hour',
         qualityTier: 'A',
+        gCO2ePerKWh: 130,
       })
     })
 

@@ -8,33 +8,32 @@
  * docs/design/2026-11-localised-time-resolved-carbon-estimation.md.
  */
 
+import type {
+  EmissionFactorType,
+  Granularity,
+  IntensityBasis,
+  LicenceId,
+  Provenance,
+  QualityTier,
+} from '@cloud-carbon-footprint/common'
+
+/*
+ * Granularity, IntensityBasis, EmissionFactorType, LicenceId, QualityTier and
+ * Provenance live in @cloud-carbon-footprint/common, because ServiceData
+ * carries Provenance. They are re-exported here so this package's API is
+ * unchanged.
+ */
+export type {
+  EmissionFactorType,
+  Granularity,
+  IntensityBasis,
+  LicenceId,
+  Provenance,
+  QualityTier,
+} from '@cloud-carbon-footprint/common'
+
 /** Cloud providers known to the source layer. */
 export type CloudProvider = 'AWS' | 'GCP' | 'AZURE' | 'ALI' | 'ON_PREMISE'
-
-/** Length of the period an intensity point or a usage row covers. */
-export type Granularity = 'hour' | 'day' | 'month' | 'year'
-
-/**
- * Accounting basis of an intensity value.
- * - location-consumption: average intensity of what a zone consumes, imports traced (flow-traced).
- * - location-production: average intensity of what a zone generates, imports not traced.
- * - marginal: intensity of the next unit of demand (for example WattTime MOER).
- */
-export type IntensityBasis =
-  | 'location-consumption'
-  | 'location-production'
-  | 'marginal'
-
-/** Whether upstream (lifecycle) emissions are included, or combustion only (direct). */
-export type EmissionFactorType = 'lifecycle' | 'direct'
-
-export type LicenceId =
-  | 'public-domain'
-  | 'CC-BY-4.0'
-  | 'open-attribution'
-  | 'non-commercial'
-  | 'commercial'
-  | 'custom'
 
 export interface LicenceDeclaration {
   id: LicenceId
@@ -114,25 +113,6 @@ export interface IntensityStore {
   put(points: IntensityPoint[]): Promise<void>
   /** Retention enforcement. Returns the number of points removed. */
   purge(sourceId: string, olderThan: Date): Promise<number>
-}
-
-/** Quality tiers, section 6.4 of the design. */
-export type QualityTier = 'A' | 'B' | 'C' | 'D'
-
-export interface Provenance {
-  sourceId: string
-  /** The grid zone the intensity came from, not the cloud availability zone. */
-  zoneId: string
-  granularity: Granularity
-  basis: IntensityBasis
-  factorType: EmissionFactorType
-  isEstimated: boolean
-  licenceId: LicenceId
-  qualityTier: QualityTier
-  /** CCF energy model version (section 9). */
-  modelVersion: string
-  /** Calibration version (section 10), when calibration was applied. */
-  calibrationVersion?: string
 }
 
 export interface ResolvedIntensity {
