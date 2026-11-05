@@ -110,7 +110,7 @@ fileignoreconfig:
 - filename: docker/nginx.conf
   checksum: a4632d785a11f199217d4229a40eba5a38180d9945d96799dc9b5efc6a3bc06e
 - filename: docs/design/2026-11-localised-time-resolved-carbon-estimation.md
-  checksum: 9a8b94291faebc624e566a1ce5f40ed5da7da5baaf9117e8bfa9489f7d627990
+  checksum: a87119330befadc84596a68f7cd8fb89926ef61fcef77296f2ba742496c532f8
 - filename: microsite/blog/2023-08-23-ccf-on-vm.md
   checksum: 84e94d40daf06c50f7b0e26d8d73a300d967279a87612e991e417530bfb8774c
 - filename: microsite/docs/ClassifyingUsageTypes.md
@@ -497,9 +497,9 @@ fileignoreconfig:
 - filename: wn-parrots-hug.md
   checksum: 1f12bbb3fcb87debd6463cc3d5eb46ff5848d21b492993f92bf408dcf6007b94
 - filename: packages/grid-intensity/src/__tests__/MongoDbIntensityStore.test.ts
-  checksum: 8ba5b285bcf876fa065f297322c822badb1d70099552bdb28e5a6e691087504d
+  checksum: c87d87d512316f3c307dbf9adbbaa1b4f48c566a655641f62bb39abbe2bd46c0
 - filename: packages/grid-intensity/src/stores/MongoDbIntensityStore.ts
-  checksum: efd342424c133d97e5c209eb8054f509a1296f8ba62c50f81fdffc5c74e3dab0
+  checksum: be0e06714f3172c1ce950a64722db9c6451ff01343c082fc61408c3c34f01873
 - filename: .changeset/phase1-review-fixes.md
   checksum: aa5b2294d6bd2e9ef42dff118246cafcd9f9729a9e2c7000fe7450a6de1d91a7
 - filename: packages/grid-intensity/src/stores/createIntensityStore.ts
