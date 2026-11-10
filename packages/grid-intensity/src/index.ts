@@ -34,7 +34,10 @@ export {
 export type {
   GridIntensityResolverOptions,
   ResolverLogger,
+  SourceView,
 } from './GridIntensityResolver'
+export { GridIntensityCapabilityReporter } from './CapabilityReporter'
+export type { CapabilityReporterOptions } from './CapabilityReporter'
 export {
   ElectricityMapsRequestError,
   isElectricityMapsRequestError,

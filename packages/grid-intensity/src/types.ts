@@ -138,30 +138,61 @@ export interface ResolvedIntensity {
   provenance: Provenance
 }
 
-/** Licence state of a source for a region, as the doctor command reports it. */
+/** A cloud provider region to report capabilities for. */
+export interface ProviderRegion {
+  provider: CloudProvider
+  region: string
+}
+
+/**
+ * Licence state of a source for a region, as the doctor command reports it:
+ * - open: the licence needs no acknowledgement.
+ * - acknowledged: it needs one, and the operator has listed the source in
+ *   GRID_INTENSITY_LICENCE_ACKNOWLEDGEMENTS.
+ * - needs-acknowledgement: it needs one and has none, so the source is not
+ *   used.
+ * - unavailable: the source has no zone, or no data, for the region.
+ */
 export type LicenceState =
   | 'open'
   | 'acknowledged'
   | 'needs-acknowledgement'
   | 'unavailable'
 
+/** One value per lookback window of the capability report. Each ends now. */
+export interface LookbackWindows<T> {
+  last24Hours: T
+  last30Days: T
+  last12Months: T
+}
+
 export interface SourceCapabilitySummary {
   sourceId: string
   /** The source's zone for the region, or null when it has no mapping. */
   zoneId: string | null
   licenceState: LicenceState
-  /** Best tier available for each lookback window, or null when none. */
-  bestTier: {
-    last24Hours: QualityTier | null
-    last30Days: QualityTier | null
-    last12Months: QualityTier | null
-  }
+  /**
+   * Best tier the source can deliver for a day of usage in each lookback
+   * window, or null when it can deliver none. It is what the source offers:
+   * a source in the needs-acknowledgement state is not used until it is
+   * acknowledged.
+   */
+  bestTier: LookbackWindows<QualityTier | null>
+  /**
+   * Share of the UTC days in each lookback window that the source can serve,
+   * in whole or in part, 0 to 1. A short lookback or late data shows here.
+   */
+  coverage: LookbackWindows<number>
+  /** Text to show wherever the source's data for the zone is shown. */
+  attribution?: string
+  /** A failed or unauthenticated probe, or why the zone's fetches stopped. */
   error?: string
 }
 
 export interface RegionCapability {
   provider: CloudProvider
   region: string
+  /** One entry per configured source, in GRID_INTENSITY_SOURCES order. */
   sources: SourceCapabilitySummary[]
 }
 
