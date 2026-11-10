@@ -1,0 +1,50 @@
+{
+  "description": "The same request as national-range-missing-actual.json, 32 minutes later. The actual for 09:00Z has changed from 249 to 248, and the half hours starting 09:30Z and 10:00Z, null before, now read 246 and 243. The 10:00Z value was still null 90 seconds earlier, 12 minutes after that half hour ended. Nothing in the body marks a value as first published or revised.",
+  "licence": "CC-BY-4.0",
+  "attribution": "Contains data from the Carbon Intensity API by National Energy System Operator (NESO), https://carbonintensity.org.uk, licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).",
+  "recordedAt": "2026-11-10T10:43:30Z",
+  "trimmed": false,
+  "request": {
+    "method": "GET",
+    "url": "https://api.carbonintensity.org.uk/intensity/2026-11-10T08:31Z/2026-11-10T11:30Z",
+    "headers": { "Accept": "application/json", "User-Agent": "curl/8.7.1" }
+  },
+  "response": {
+    "status": 200,
+    "headers": { "content-type": "application/json" },
+    "body": {
+      "data": [
+        {
+          "from": "2026-11-10T08:30Z",
+          "to": "2026-11-10T09:00Z",
+          "intensity": { "forecast": 259, "actual": 254, "index": "very high" }
+        },
+        {
+          "from": "2026-11-10T09:00Z",
+          "to": "2026-11-10T09:30Z",
+          "intensity": { "forecast": 254, "actual": 248, "index": "very high" }
+        },
+        {
+          "from": "2026-11-10T09:30Z",
+          "to": "2026-11-10T10:00Z",
+          "intensity": { "forecast": 250, "actual": 246, "index": "very high" }
+        },
+        {
+          "from": "2026-11-10T10:00Z",
+          "to": "2026-11-10T10:30Z",
+          "intensity": { "forecast": 242, "actual": 243, "index": "very high" }
+        },
+        {
+          "from": "2026-11-10T10:30Z",
+          "to": "2026-11-10T11:00Z",
+          "intensity": { "forecast": 238, "actual": null, "index": "very high" }
+        },
+        {
+          "from": "2026-11-10T11:00Z",
+          "to": "2026-11-10T11:30Z",
+          "intensity": { "forecast": 233, "actual": null, "index": "very high" }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "description": "The same request again, 62 minutes after national-range-missing-actual.json and 30 minutes after national-range-revised-actual.json. The actual for 10:00Z has changed from 243 to 244, about 43 minutes after that half hour ended. The 10:30Z actual is now published (242); it was null 90 seconds earlier. The forecasts for 10:30Z and 11:00Z have moved from 238 to 240 and from 233 to 236. The older values are unchanged.",
+  "licence": "CC-BY-4.0",
+  "attribution": "Contains data from the Carbon Intensity API by National Energy System Operator (NESO), https://carbonintensity.org.uk, licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).",
+  "recordedAt": "2026-11-10T11:13:30Z",
+  "trimmed": false,
+  "request": {
+    "method": "GET",
+    "url": "https://api.carbonintensity.org.uk/intensity/2026-11-10T08:31Z/2026-11-10T11:30Z",
+    "headers": { "Accept": "application/json", "User-Agent": "curl/8.7.1" }
+  },
+  "response": {
+    "status": 200,
+    "headers": { "content-type": "application/json" },
+    "body": {
+      "data": [
+        {
+          "from": "2026-11-10T08:30Z",
+          "to": "2026-11-10T09:00Z",
+          "intensity": { "forecast": 259, "actual": 254, "index": "very high" }
+        },
+        {
+          "from": "2026-11-10T09:00Z",
+          "to": "2026-11-10T09:30Z",
+          "intensity": { "forecast": 254, "actual": 248, "index": "very high" }
+        },
+        {
+          "from": "2026-11-10T09:30Z",
+          "to": "2026-11-10T10:00Z",
+          "intensity": { "forecast": 250, "actual": 246, "index": "very high" }
+        },
+        {
+          "from": "2026-11-10T10:00Z",
+          "to": "2026-11-10T10:30Z",
+          "intensity": { "forecast": 242, "actual": 244, "index": "very high" }
+        },
+        {
+          "from": "2026-11-10T10:30Z",
+          "to": "2026-11-10T11:00Z",
+          "intensity": { "forecast": 240, "actual": 242, "index": "very high" }
+        },
+        {
+          "from": "2026-11-10T11:00Z",
+          "to": "2026-11-10T11:30Z",
+          "intensity": { "forecast": 236, "actual": null, "index": "very high" }
+        }
+      ]
+    }
+  }
+}

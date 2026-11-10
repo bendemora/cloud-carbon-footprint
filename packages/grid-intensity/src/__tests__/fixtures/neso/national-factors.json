@@ -1,0 +1,36 @@
+{
+  "description": "The emission factors NESO applies per fuel type and interconnector, in gCO2/kWh. Zero for nuclear, hydro, wind and solar shows these are direct factors, not lifecycle ones.",
+  "licence": "CC-BY-4.0",
+  "attribution": "Contains data from the Carbon Intensity API by National Energy System Operator (NESO), https://carbonintensity.org.uk, licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).",
+  "recordedAt": "2026-11-10T10:02:33Z",
+  "trimmed": false,
+  "request": {
+    "method": "GET",
+    "url": "https://api.carbonintensity.org.uk/intensity/factors",
+    "headers": { "Accept": "application/json", "User-Agent": "curl/8.7.1" }
+  },
+  "response": {
+    "status": 200,
+    "headers": { "content-type": "application/json" },
+    "body": {
+      "data": [
+        {
+          "Biomass": 120,
+          "Coal": 937,
+          "Dutch Imports": 474,
+          "French Imports": 53,
+          "Gas (Combined Cycle)": 394,
+          "Gas (Open Cycle)": 651,
+          "Hydro": 0,
+          "Irish Imports": 458,
+          "Nuclear": 0,
+          "Oil": 935,
+          "Other": 300,
+          "Pumped Storage": 0,
+          "Solar": 0,
+          "Wind": 0
+        }
+      ]
+    }
+  }
+}
