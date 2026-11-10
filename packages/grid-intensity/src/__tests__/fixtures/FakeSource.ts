@@ -27,6 +27,11 @@ export interface FakeSourceOptions {
   isEstimated?: boolean
   failCapabilities?: boolean
   failFetch?: boolean
+  /** answer that the source has no capability for the zone */
+  unavailable?: boolean
+  /** the probe answer; default reachable and authenticated */
+  status?: SourceStatus
+  failProbe?: boolean
   /** omit the points for these period starts (ISO strings) */
   omit?: string[]
 }
@@ -44,6 +49,7 @@ export class FakeSource implements GridIntensitySource {
   readonly licence: LicenceDeclaration
   readonly fetchCalls: FetchCall[] = []
   capabilityCalls = 0
+  probeCalls = 0
   failCapabilities: boolean
   failFetch: boolean
 
@@ -61,7 +67,9 @@ export class FakeSource implements GridIntensitySource {
   }
 
   async probe(): Promise<SourceStatus> {
-    return { reachable: true, authenticated: true }
+    this.probeCalls++
+    if (this.options.failProbe) throw new Error('getaddrinfo ENOTFOUND')
+    return this.options.status ?? { reachable: true, authenticated: true }
   }
 
   mapRegion(_provider: CloudProvider, region: string): string | null {
@@ -72,6 +80,7 @@ export class FakeSource implements GridIntensitySource {
   async capabilities(zoneId: string): Promise<ZoneCapability | null> {
     this.capabilityCalls++
     if (this.failCapabilities) throw new Error('capability probe failed')
+    if (this.options.unavailable) return null
     return {
       zoneId,
       granularities: this.options.granularities ?? ['hour', 'day'],

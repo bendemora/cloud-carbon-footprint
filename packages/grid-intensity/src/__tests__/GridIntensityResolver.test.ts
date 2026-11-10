@@ -986,4 +986,145 @@ describe('GridIntensityResolver', () => {
       expect(result.provenance.sourceId).toBe('static')
     })
   })
+
+  describe('sourceViews', () => {
+    it('lists every source in configured order with its zone and capability for the region', async () => {
+      const unmapped = new FakeSource({ id: 'unmapped', zones: {} })
+      const live = new FakeSource({ id: 'live' })
+      const { resolver } = createResolver({
+        sources: [unmapped, live, staticSource()],
+      })
+      const views = await resolver.sourceViews('AWS', 'eu-west-2')
+      expect(views).toEqual([
+        {
+          source: unmapped,
+          zoneId: null,
+          capability: null,
+          acknowledged: false,
+          status: { reachable: true, authenticated: true },
+        },
+        {
+          source: live,
+          zoneId: 'GB',
+          capability: {
+            zoneId: 'GB',
+            granularities: ['hour', 'day'],
+            bases: ['location-consumption'],
+            licence: live.licence,
+          },
+          acknowledged: false,
+          status: { reachable: true, authenticated: true },
+        },
+        {
+          source: expect.objectContaining({ id: 'static' }),
+          zoneId: 'aws:eu-west-2',
+          capability: expect.objectContaining({ granularities: ['year'] }),
+          acknowledged: false,
+          status: { reachable: true, authenticated: true },
+        },
+      ])
+      expect(unmapped.capabilityCalls).toBe(0)
+    })
+
+    it('says why the fetches of a zone are stopped, until the TTL has gone by', async () => {
+      const live = new FakeSource({ failFetch: true })
+      const { resolver, advanceHours } = createResolver({
+        sources: [live, staticSource()],
+        capabilityTtlHours: 24,
+      })
+      const before = await resolver.sourceViews('AWS', 'eu-west-2')
+      await resolver.resolve('AWS', 'eu-west-2', DAY_START, DAY_END)
+      const during = await resolver.sourceViews('AWS', 'eu-west-2')
+      advanceHours(25)
+      const after = await resolver.sourceViews('AWS', 'eu-west-2')
+
+      expect(before[0].failure).toBeUndefined()
+      expect(during[0].failure).toBe('fetch failed: 401 Unauthorized')
+      expect(during[1].failure).toBeUndefined()
+      expect(after[0].failure).toBeUndefined()
+    })
+
+    it('has no capability for a source whose first probe of the zone failed, and asks once per TTL', async () => {
+      const live = new FakeSource({ failCapabilities: true })
+      const { resolver } = createResolver({ sources: [live] })
+      await resolver.sourceViews('AWS', 'eu-west-2')
+      const [view] = await resolver.sourceViews('AWS', 'eu-west-2')
+
+      expect(view.capability).toBeNull()
+      expect(view.failure).toBe(
+        'capability probe failed: capability probe failed',
+      )
+      expect(live.capabilityCalls).toBe(1)
+    })
+
+    it('uses the capability answer the resolver already holds', async () => {
+      const live = new FakeSource()
+      const { resolver } = createResolver({ sources: [live] })
+      await resolver.resolve('AWS', 'eu-west-2', DAY_START, DAY_END)
+      await resolver.sourceViews('AWS', 'eu-west-2')
+      expect(live.capabilityCalls).toBe(1)
+    })
+
+    it('keeps the last capability, with the failure, when a later probe fails', async () => {
+      const live = new FakeSource({ granularities: ['day'] })
+      const { resolver, advanceHours } = createResolver({
+        sources: [live],
+        capabilityTtlHours: 24,
+      })
+      await resolver.sourceViews('AWS', 'eu-west-2')
+      advanceHours(25)
+      live.failCapabilities = true
+      const [view] = await resolver.sourceViews('AWS', 'eu-west-2')
+
+      expect(view.capability).toMatchObject({ granularities: ['day'] })
+      expect(view.failure).toBe(
+        'capability probe failed: capability probe failed',
+      )
+    })
+
+    it('marks the sources the operator has acknowledged', async () => {
+      const { resolver } = createResolver({
+        sources: [
+          new FakeSource({ id: 'electricitymaps' }),
+          new FakeSource({ id: 'other' }),
+        ],
+        licenceAcknowledgements: ['electricitymaps'],
+      })
+      const views = await resolver.sourceViews('AWS', 'eu-west-2')
+      expect(views.map((view) => view.acknowledged)).toEqual([true, false])
+    })
+
+    it("gives each source's probe answer, asking it once per TTL", async () => {
+      const status = {
+        reachable: true,
+        authenticated: false,
+        message: 'HTTP 401',
+      }
+      const live = new FakeSource({ status })
+      const { resolver, advanceHours } = createResolver({
+        sources: [live],
+        capabilityTtlHours: 24,
+      })
+      const [first] = await resolver.sourceViews('AWS', 'eu-west-2')
+      await resolver.sourceViews('AWS', 'eu-west-3')
+      expect(first.status).toEqual(status)
+      expect(live.probeCalls).toBe(1)
+
+      advanceHours(25)
+      await resolver.sourceViews('AWS', 'eu-west-2')
+      expect(live.probeCalls).toBe(2)
+    })
+
+    it('reports a probe that throws as a source that cannot be reached', async () => {
+      const { resolver } = createResolver({
+        sources: [new FakeSource({ failProbe: true })],
+      })
+      const [view] = await resolver.sourceViews('AWS', 'eu-west-2')
+      expect(view.status).toEqual({
+        reachable: false,
+        authenticated: false,
+        message: 'getaddrinfo ENOTFOUND',
+      })
+    })
+  })
 })

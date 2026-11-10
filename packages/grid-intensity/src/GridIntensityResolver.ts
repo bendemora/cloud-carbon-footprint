@@ -26,6 +26,7 @@ import {
   IntensityStore,
   QualityTier,
   ResolvedIntensity,
+  SourceStatus,
   ZoneCapability,
 } from './types'
 
@@ -50,6 +51,24 @@ export interface GridIntensityResolverOptions {
   modelVersion?: string
   logger?: ResolverLogger
   now?: () => Date
+}
+
+/** What the resolver knows about one source for a provider region. */
+export interface SourceView {
+  source: GridIntensitySource
+  /** The source's zone for the region, or null when it has no mapping. */
+  zoneId: string | null
+  /**
+   * The zone's capability: the answer kept for the TTL, or the last one
+   * after a failed probe. Null when the source has none for the zone, or has
+   * not answered yet.
+   */
+  capability: ZoneCapability | null
+  /** Whether the operator has acknowledged the source's licence. */
+  acknowledged: boolean
+  status: SourceStatus
+  /** Why the zone's fetches are stopped, while they are. */
+  failure?: string
 }
 
 export class NoIntensityAvailableError extends Error {
@@ -127,7 +146,15 @@ export class GridIntensityResolver implements IntensityResolver {
     string,
     { capability: ZoneCapability | null; expiresAt: number }
   >()
-  private readonly failedUntil = new Map<string, number>()
+  private readonly statusCache = new Map<
+    string,
+    { status: SourceStatus; expiresAt: number }
+  >()
+  /** Zones whose fetches are stopped: until when, and why. */
+  private readonly failures = new Map<
+    string,
+    { until: number; message: string }
+  >()
   /** Warning id to the time it may be logged again. */
   private readonly warnedUntil = new Map<string, number>()
   /** Stand-ins for capabilities that could not be probed (see capability()). */
@@ -202,6 +229,54 @@ export class GridIntensityResolver implements IntensityResolver {
     }
     if (best) return best.resolved
     throw new NoIntensityAvailableError(provider, region)
+  }
+
+  /**
+   * What the resolver knows about each source for a region, in configured
+   * order, for the capability report.
+   */
+  async sourceViews(
+    provider: CloudProvider,
+    region: string,
+  ): Promise<SourceView[]> {
+    const views: SourceView[] = []
+    for (const source of this.sources) {
+      const zoneId = source.mapRegion(provider, region)
+      const capability = zoneId ? await this.capability(source, zoneId) : null
+      const failure = zoneId ? this.failureOf(source.id, zoneId) : undefined
+      views.push({
+        source,
+        zoneId,
+        capability:
+          capability && !this.unprobed.has(capability) ? capability : null,
+        acknowledged: this.acknowledged.has(source.id),
+        status: await this.status(source),
+        ...(failure === undefined ? {} : { failure }),
+      })
+    }
+    return views
+  }
+
+  /**
+   * The source's probe answer, kept for the TTL so that a report does not
+   * call the source every time. A probe that throws is an unreachable source.
+   */
+  private async status(source: GridIntensitySource): Promise<SourceStatus> {
+    const nowMs = this.now().getTime()
+    const cached = this.statusCache.get(source.id)
+    if (cached && cached.expiresAt > nowMs) return cached.status
+    let status: SourceStatus
+    try {
+      status = await source.probe()
+    } catch (error) {
+      status = {
+        reachable: false,
+        authenticated: false,
+        message: messageOf(error),
+      }
+    }
+    this.statusCache.set(source.id, { status, expiresAt: nowMs + this.ttlMs })
+    return status
   }
 
   /** Steps 1 and 3: mapping, capability and licence checks. */
@@ -289,16 +364,7 @@ export class GridIntensityResolver implements IntensityResolver {
       }
       return null
     }
-    // A day or hour running past the end of the source's data (today) is
-    // served from its finest data, so the part before `latest` is covered;
-    // the partial coverage marks it estimated. Longer periods keep their
-    // usual granularity and lose only the incomplete last period.
-    const granularity =
-      capability.latest &&
-      end > capability.latest &&
-      isAtLeastAsFine(usageGranularity, 'day')
-        ? finestOf(capability.granularities)
-        : requestGranularity(capability.granularities, usageGranularity)
+    const granularity = granularityFor(capability, end, usageGranularity)
     return this.resolveAt(candidate, granularity, start, end, usageGranularity)
   }
 
@@ -323,7 +389,7 @@ export class GridIntensityResolver implements IntensityResolver {
         )
       : []
     const fetched: IntensityPoint[] = []
-    const fetchable = this.isFailing(source.id, zoneId)
+    const fetchable = this.failureOf(source.id, zoneId)
       ? []
       : periodsCovering(start, end, granularity).filter((period) =>
           isWithinWindow(period, capability),
@@ -440,11 +506,12 @@ export class GridIntensityResolver implements IntensityResolver {
     this.sessionExpiresAt = nowMs + this.ttlMs
   }
 
-  private isFailing(sourceId: string, zoneId: string): boolean {
-    return (
-      (this.failedUntil.get(`${sourceId}|${zoneId}`) ?? 0) >
-      this.now().getTime()
-    )
+  /** The failure that has stopped the zone's fetches, within the TTL. */
+  private failureOf(sourceId: string, zoneId: string): string | undefined {
+    const failure = this.failures.get(`${sourceId}|${zoneId}`)
+    return failure && failure.until > this.now().getTime()
+      ? failure.message
+      : undefined
   }
 
   private async storedPoints(
@@ -495,7 +562,10 @@ export class GridIntensityResolver implements IntensityResolver {
     error: unknown,
   ): void {
     const zoneRef = `${source.id}|${zoneId}`
-    this.failedUntil.set(zoneRef, this.now().getTime() + this.ttlMs)
+    this.failures.set(zoneRef, {
+      until: this.now().getTime() + this.ttlMs,
+      message: `${operation} failed: ${messageOf(error)}`,
+    })
     this.warnOnce(
       `failure|${zoneRef}`,
       `Grid intensity source ${source.id} ${operation} failed for zone ${zoneId}: ${messageOf(error)}. Skipping it for ${this.ttlMs / HOUR_MS} hours.`,
@@ -533,8 +603,29 @@ const requestGranularity = (
     : finestOf(available)
 }
 
+/**
+ * The granularity to ask a source for, for a usage period ending at `end`.
+ * A day or hour running past the end of the source's data (today) is served
+ * from its finest data, so the part before `latest` is covered; the partial
+ * coverage marks it estimated. Longer periods keep their usual granularity
+ * and lose only the incomplete last period.
+ */
+export const granularityFor = (
+  capability: ZoneCapability,
+  end: Date,
+  usageGranularity: Granularity,
+): Granularity =>
+  capability.latest &&
+  end > capability.latest &&
+  isAtLeastAsFine(usageGranularity, 'day')
+    ? finestOf(capability.granularities)
+    : requestGranularity(capability.granularities, usageGranularity)
+
 /** Whether the source can be asked for the whole period. */
-const isWithinWindow = (period: Period, capability: ZoneCapability): boolean =>
+export const isWithinWindow = (
+  period: Period,
+  capability: ZoneCapability,
+): boolean =>
   (!capability.earliest || period.start >= capability.earliest) &&
   (!capability.latest || period.end <= capability.latest)
 
