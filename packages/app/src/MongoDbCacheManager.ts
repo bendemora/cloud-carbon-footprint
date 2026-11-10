@@ -170,7 +170,10 @@ export default class MongoDbCacheManager extends CacheManager {
         database
           .listCollections({ name: collectionName })
           .next(async (err: Error, collectionInfo: any) => {
-            if (err) reject(err)
+            // Nothing handles a rejection of this callback's own promise, and
+            // an unhandled rejection ends the process. So a failure goes to
+            // reject(), and no query runs after one.
+            if (err) return reject(err)
 
             if (!collectionInfo) {
               resolve([{ dates: [] }])
@@ -202,27 +205,29 @@ export default class MongoDbCacheManager extends CacheManager {
               }
             }
 
-            resolve(
-              await estimates
-                .aggregate(
-                  [
-                    {
-                      $group: {
-                        _id: null,
-                        dates: {
-                          $addToSet: addToSet,
-                        },
+            estimates
+              .aggregate(
+                [
+                  {
+                    $group: {
+                      _id: null,
+                      dates: {
+                        $addToSet: addToSet,
                       },
                     },
-                  ],
-                  { allowDiskUse: true },
-                )
-                .toArray(),
-            )
+                  },
+                ],
+                { allowDiskUse: true },
+              )
+              .toArray()
+              .then(resolve, reject)
           })
       })
 
-      const cachedDates = aggResult[0].dates
+      // $group returns no document for an empty collection: nothing is
+      // cached. The countDocuments check above gives the same answer only
+      // when it answers before the aggregation does.
+      const cachedDates = aggResult[0]?.dates ?? []
       const missingDates = requestedDates.filter((a) => {
         const index = cachedDates.findIndex((cachedDate: string) =>
           moment.utc(cachedDate).isSame(a),
