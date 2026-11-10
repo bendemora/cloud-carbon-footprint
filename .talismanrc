@@ -116,7 +116,7 @@ fileignoreconfig:
 - filename: microsite/docs/ClassifyingUsageTypes.md
   checksum: f4b232851337efec90c4a88271cdf4cde2a9d732f0f69824223f1dcf7c6b8aaa
 - filename: microsite/docs/ConfigurationOptions/EmissionsFactors.md
-  checksum: a633b364ed7e8e9c6f268c5d48d14bc07f19cd7af87931288f61deaa0fcf4226
+  checksum: ec5b7b82383e7acd5e12ac05d9abb21d3eb1c2f0e9e0e7f12b952a171f70334b
 - filename: microsite/docs/ConfigurationOptions/PerformanceConsiderations.md
   checksum: f98b207c28550e3f44b27a47ebb0a5553c28318edaaf2f490ba94856a082badb
 - filename: microsite/docs/CreatingALookupTable.md
