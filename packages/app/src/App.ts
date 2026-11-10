@@ -31,10 +31,12 @@ import {
   AliAccount,
 } from '@cloud-carbon-footprint/ali'
 import { OnPremise } from '@cloud-carbon-footprint/on-premise'
+import { CapabilityReport } from '@cloud-carbon-footprint/grid-intensity'
 
 import cache from './Cache'
 import { EstimationRequest, RecommendationRequest } from './CreateValidRequest'
 import { includeCloudProviders } from './common/helpers'
+import { getGridIntensityCapabilities } from './GridIntensityCapabilities'
 
 export const recommendationsMockPath = 'recommendations.mock.json'
 
@@ -167,6 +169,14 @@ export default class App {
       })
       return emissionDataResult
     }, [])
+  }
+
+  /**
+   * What each configured grid intensity source can deliver for each provider
+   * region: the doctor command and GET /api/grid-intensity/capabilities.
+   */
+  getGridIntensityCapabilities(): Promise<CapabilityReport> {
+    return getGridIntensityCapabilities()
   }
 
   async getRecommendations(

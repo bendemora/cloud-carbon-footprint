@@ -12,7 +12,10 @@ export { default as RDSStorage } from './RDSStorage'
 export { default as Lambda } from './Lambda'
 export { ServiceWrapper } from './ServiceWrapper'
 export { default as CostAndUsageReports } from './CostAndUsageReports'
-export { AWS_REGIONS } from './AWSRegions'
+export {
+  AWS_REGIONS,
+  AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
+} from './AWSRegions'
 export {
   RightsizingRecommendations,
   ComputeOptimizerRecommendations,

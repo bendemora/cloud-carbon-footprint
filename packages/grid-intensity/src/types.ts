@@ -194,12 +194,33 @@ export interface RegionCapability {
   region: string
   /** One entry per configured source, in GRID_INTENSITY_SOURCES order. */
   sources: SourceCapabilitySummary[]
+  /**
+   * The region's Electricity Maps zone in the legacy v3 lookup, or null when
+   * it has none and the region is left to the sources. Present only while
+   * that lookup is in use (CapabilityReport.legacyElectricityMaps).
+   */
+  legacyElectricityMapsZoneId?: string | null
+}
+
+/**
+ * The Electricity Maps v3 lookup that resolveEmissionsFactors applies before
+ * the sources while ELECTRICITY_MAPS_TOKEN is set and no v4 source exists.
+ */
+export interface LegacyElectricityMapsState {
+  /** The source id on the provenance of its estimates. */
+  sourceId: string
+  /** The tier of the estimates it serves. */
+  qualityTier: QualityTier
+  /** The state in plain words, for the doctor output. */
+  message: string
 }
 
 /** Served by the doctor command and GET /api/grid-intensity/capabilities. */
 export interface CapabilityReport {
   generatedAt: Date
   regions: RegionCapability[]
+  /** Present only while the legacy Electricity Maps v3 lookup is in use. */
+  legacyElectricityMaps?: LegacyElectricityMapsState
 }
 
 export interface IntensityResolver {
