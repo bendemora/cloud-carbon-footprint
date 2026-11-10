@@ -1,0 +1,22 @@
+{
+  "description": "A national range of exactly 31 days. HTTP 400. The message says greater than 31 days, but 31 days is refused and 30 days 23 hours 30 minutes is accepted.",
+  "licence": "CC-BY-4.0",
+  "attribution": "Contains data from the Carbon Intensity API by National Energy System Operator (NESO), https://carbonintensity.org.uk, licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).",
+  "recordedAt": "2026-11-10T10:04:09Z",
+  "trimmed": false,
+  "request": {
+    "method": "GET",
+    "url": "https://api.carbonintensity.org.uk/intensity/2026-08-01T00:00Z/2026-09-01T00:00Z",
+    "headers": { "Accept": "application/json", "User-Agent": "curl/8.7.1" }
+  },
+  "response": {
+    "status": 400,
+    "headers": { "content-type": "application/json" },
+    "body": {
+      "error": {
+        "code": "400 Bad Request",
+        "message": "The date range you have specified is greater than 31 days. Please select a smaller date range."
+      }
+    }
+  }
+}

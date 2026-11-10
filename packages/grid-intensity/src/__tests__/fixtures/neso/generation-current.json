@@ -1,0 +1,33 @@
+{
+  "description": "National generation mix for the current half hour. Unlike the range form, the data property is a single object, not an array.",
+  "licence": "CC-BY-4.0",
+  "attribution": "Contains data from the Carbon Intensity API by National Energy System Operator (NESO), https://carbonintensity.org.uk, licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).",
+  "recordedAt": "2026-11-10T10:04:51Z",
+  "trimmed": false,
+  "request": {
+    "method": "GET",
+    "url": "https://api.carbonintensity.org.uk/generation",
+    "headers": { "Accept": "application/json", "User-Agent": "curl/8.7.1" }
+  },
+  "response": {
+    "status": 200,
+    "headers": { "content-type": "application/json" },
+    "body": {
+      "data": {
+        "from": "2026-11-10T09:30Z",
+        "to": "2026-11-10T10:00Z",
+        "generationmix": [
+          { "fuel": "biomass", "perc": 8.3 },
+          { "fuel": "coal", "perc": 0 },
+          { "fuel": "imports", "perc": 5 },
+          { "fuel": "gas", "perc": 60.9 },
+          { "fuel": "nuclear", "perc": 13.1 },
+          { "fuel": "other", "perc": 0 },
+          { "fuel": "hydro", "perc": 0 },
+          { "fuel": "solar", "perc": 3.4 },
+          { "fuel": "wind", "perc": 9.1 }
+        ]
+      }
+    }
+  }
+}

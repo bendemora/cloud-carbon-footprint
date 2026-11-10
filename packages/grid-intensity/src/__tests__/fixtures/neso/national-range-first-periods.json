@@ -1,0 +1,35 @@
+{
+  "description": "The first three half hours the national series has. The request starts on 2017-09-01; the first period served starts at 2017-09-11T23:00Z, which is midnight UK local time on 12 September 2017.",
+  "licence": "CC-BY-4.0",
+  "attribution": "Contains data from the Carbon Intensity API by National Energy System Operator (NESO), https://carbonintensity.org.uk, licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).",
+  "recordedAt": "2026-11-10T10:04:11Z",
+  "trimmed": "first 3 of 914 periods kept",
+  "request": {
+    "method": "GET",
+    "url": "https://api.carbonintensity.org.uk/intensity/2017-09-01T00:00Z/2017-10-01T00:00Z",
+    "headers": { "Accept": "application/json", "User-Agent": "curl/8.7.1" }
+  },
+  "response": {
+    "status": 200,
+    "headers": { "content-type": "application/json" },
+    "body": {
+      "data": [
+        {
+          "from": "2017-09-11T23:00Z",
+          "to": "2017-09-11T23:30Z",
+          "intensity": { "forecast": 134, "actual": 140, "index": "low" }
+        },
+        {
+          "from": "2017-09-11T23:30Z",
+          "to": "2017-09-12T00:00Z",
+          "intensity": { "forecast": 143, "actual": 144, "index": "low" }
+        },
+        {
+          "from": "2017-09-12T00:00Z",
+          "to": "2017-09-12T00:30Z",
+          "intensity": { "forecast": 137, "actual": 142, "index": "low" }
+        }
+      ]
+    }
+  }
+}
