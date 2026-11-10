@@ -224,7 +224,10 @@ export default class MongoDbCacheManager extends CacheManager {
           })
       })
 
-      const cachedDates = aggResult[0].dates
+      // $group returns no document for an empty collection: nothing is
+      // cached. The countDocuments check above gives the same answer only
+      // when it answers before the aggregation does.
+      const cachedDates = aggResult[0]?.dates ?? []
       const missingDates = requestedDates.filter((a) => {
         const index = cachedDates.findIndex((cachedDate: string) =>
           moment.utc(cachedDate).isSame(a),
