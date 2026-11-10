@@ -1,0 +1,57 @@
+{
+  "description": "Regional intensity for region 13 (London) over one past UTC hour, a week before the request. The intensity object has forecast and index only; there is no actual property. The data property is an object holding the region and its periods.",
+  "licence": "CC-BY-4.0",
+  "attribution": "Contains data from the Carbon Intensity API by National Energy System Operator (NESO), https://carbonintensity.org.uk, licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).",
+  "recordedAt": "2026-11-10T10:06:04Z",
+  "trimmed": false,
+  "request": {
+    "method": "GET",
+    "url": "https://api.carbonintensity.org.uk/regional/intensity/2026-11-03T00:01Z/2026-11-03T01:00Z/regionid/13",
+    "headers": { "Accept": "application/json", "User-Agent": "curl/8.7.1" }
+  },
+  "response": {
+    "status": 200,
+    "headers": { "content-type": "application/json" },
+    "body": {
+      "data": {
+        "regionid": 13,
+        "dnoregion": "UKPN London",
+        "shortname": "London",
+        "data": [
+          {
+            "from": "2026-11-03T00:00Z",
+            "to": "2026-11-03T00:30Z",
+            "intensity": { "forecast": 101, "index": "moderate" },
+            "generationmix": [
+              { "fuel": "biomass", "perc": 8.2 },
+              { "fuel": "coal", "perc": 0 },
+              { "fuel": "imports", "perc": 9.2 },
+              { "fuel": "gas", "perc": 20.4 },
+              { "fuel": "nuclear", "perc": 14.6 },
+              { "fuel": "other", "perc": 0 },
+              { "fuel": "hydro", "perc": 0.1 },
+              { "fuel": "solar", "perc": 0 },
+              { "fuel": "wind", "perc": 47.5 }
+            ]
+          },
+          {
+            "from": "2026-11-03T00:30Z",
+            "to": "2026-11-03T01:00Z",
+            "intensity": { "forecast": 91, "index": "moderate" },
+            "generationmix": [
+              { "fuel": "biomass", "perc": 8.4 },
+              { "fuel": "coal", "perc": 0 },
+              { "fuel": "imports", "perc": 9.5 },
+              { "fuel": "gas", "perc": 17.7 },
+              { "fuel": "nuclear", "perc": 14.9 },
+              { "fuel": "other", "perc": 0 },
+              { "fuel": "hydro", "perc": 0.1 },
+              { "fuel": "solar", "perc": 0 },
+              { "fuel": "wind", "perc": 49.5 }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

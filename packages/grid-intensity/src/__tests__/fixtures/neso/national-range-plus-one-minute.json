@@ -1,0 +1,30 @@
+{
+  "description": "National intensity with the start moved one minute after the hour and an unaligned end. Exactly the two half hours of the UTC hour 00:00 to 01:00 come back: the half hour containing 01:15 is left out because its end is after the requested end.",
+  "licence": "CC-BY-4.0",
+  "attribution": "Contains data from the Carbon Intensity API by National Energy System Operator (NESO), https://carbonintensity.org.uk, licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).",
+  "recordedAt": "2026-11-10T10:03:11Z",
+  "trimmed": false,
+  "request": {
+    "method": "GET",
+    "url": "https://api.carbonintensity.org.uk/intensity/2026-11-03T00:01Z/2026-11-03T01:15Z",
+    "headers": { "Accept": "application/json", "User-Agent": "curl/8.7.1" }
+  },
+  "response": {
+    "status": 200,
+    "headers": { "content-type": "application/json" },
+    "body": {
+      "data": [
+        {
+          "from": "2026-11-03T00:00Z",
+          "to": "2026-11-03T00:30Z",
+          "intensity": { "forecast": 133, "actual": 128, "index": "moderate" }
+        },
+        {
+          "from": "2026-11-03T00:30Z",
+          "to": "2026-11-03T01:00Z",
+          "intensity": { "forecast": 125, "actual": 121, "index": "moderate" }
+        }
+      ]
+    }
+  }
+}

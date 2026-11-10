@@ -1,0 +1,73 @@
+{
+  "description": "The first three half hours the regional series has for region 13. The request starts on 2018-05-01; the first period served starts at 2018-05-10T23:30Z.",
+  "licence": "CC-BY-4.0",
+  "attribution": "Contains data from the Carbon Intensity API by National Energy System Operator (NESO), https://carbonintensity.org.uk, licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).",
+  "recordedAt": "2026-11-10T10:07:10Z",
+  "trimmed": "first 3 of 961 periods kept",
+  "request": {
+    "method": "GET",
+    "url": "https://api.carbonintensity.org.uk/regional/intensity/2018-05-01T00:00Z/2018-05-31T00:00Z/regionid/13",
+    "headers": { "Accept": "application/json", "User-Agent": "curl/8.7.1" }
+  },
+  "response": {
+    "status": 200,
+    "headers": { "content-type": "application/json" },
+    "body": {
+      "data": {
+        "regionid": 13,
+        "dnoregion": "UKPN London",
+        "shortname": "London",
+        "data": [
+          {
+            "from": "2018-05-10T23:30Z",
+            "to": "2018-05-11T00:00Z",
+            "intensity": { "forecast": 200, "index": "moderate" },
+            "generationmix": [
+              { "fuel": "biomass", "perc": 3.1 },
+              { "fuel": "coal", "perc": 0 },
+              { "fuel": "imports", "perc": 41.2 },
+              { "fuel": "gas", "perc": 27.6 },
+              { "fuel": "nuclear", "perc": 23.1 },
+              { "fuel": "other", "perc": 0 },
+              { "fuel": "hydro", "perc": 0.5 },
+              { "fuel": "solar", "perc": 0 },
+              { "fuel": "wind", "perc": 4.5 }
+            ]
+          },
+          {
+            "from": "2018-05-11T00:00Z",
+            "to": "2018-05-11T00:30Z",
+            "intensity": { "forecast": 193, "index": "moderate" },
+            "generationmix": [
+              { "fuel": "biomass", "perc": 4.4 },
+              { "fuel": "coal", "perc": 0.1 },
+              { "fuel": "imports", "perc": 36.7 },
+              { "fuel": "gas", "perc": 27.6 },
+              { "fuel": "nuclear", "perc": 23.4 },
+              { "fuel": "other", "perc": 0 },
+              { "fuel": "hydro", "perc": 0.6 },
+              { "fuel": "solar", "perc": 0 },
+              { "fuel": "wind", "perc": 7.2 }
+            ]
+          },
+          {
+            "from": "2018-05-11T00:30Z",
+            "to": "2018-05-11T01:00Z",
+            "intensity": { "forecast": 182, "index": "moderate" },
+            "generationmix": [
+              { "fuel": "biomass", "perc": 6.1 },
+              { "fuel": "coal", "perc": 0.2 },
+              { "fuel": "imports", "perc": 29.4 },
+              { "fuel": "gas", "perc": 27.5 },
+              { "fuel": "nuclear", "perc": 23.5 },
+              { "fuel": "other", "perc": 0 },
+              { "fuel": "hydro", "perc": 0.9 },
+              { "fuel": "solar", "perc": 0 },
+              { "fuel": "wind", "perc": 12.4 }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "description": "National generation mix for one UTC hour. Percentages by fuel, one decimal place; the data property is an array.",
+  "licence": "CC-BY-4.0",
+  "attribution": "Contains data from the Carbon Intensity API by National Energy System Operator (NESO), https://carbonintensity.org.uk, licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).",
+  "recordedAt": "2026-11-10T10:04:54Z",
+  "trimmed": false,
+  "request": {
+    "method": "GET",
+    "url": "https://api.carbonintensity.org.uk/generation/2026-11-03T00:01Z/2026-11-03T01:00Z",
+    "headers": { "Accept": "application/json", "User-Agent": "curl/8.7.1" }
+  },
+  "response": {
+    "status": 200,
+    "headers": { "content-type": "application/json" },
+    "body": {
+      "data": [
+        {
+          "from": "2026-11-03T00:00Z",
+          "to": "2026-11-03T00:30Z",
+          "generationmix": [
+            { "fuel": "biomass", "perc": 11.2 },
+            { "fuel": "coal", "perc": 0 },
+            { "fuel": "imports", "perc": 7 },
+            { "fuel": "gas", "perc": 27.9 },
+            { "fuel": "nuclear", "perc": 17.2 },
+            { "fuel": "other", "perc": 0.8 },
+            { "fuel": "hydro", "perc": 1.5 },
+            { "fuel": "solar", "perc": 0 },
+            { "fuel": "wind", "perc": 34.4 }
+          ]
+        },
+        {
+          "from": "2026-11-03T00:30Z",
+          "to": "2026-11-03T01:00Z",
+          "generationmix": [
+            { "fuel": "biomass", "perc": 11.3 },
+            { "fuel": "coal", "perc": 0 },
+            { "fuel": "imports", "perc": 7.3 },
+            { "fuel": "gas", "perc": 26.3 },
+            { "fuel": "nuclear", "perc": 17.5 },
+            { "fuel": "other", "perc": 0.8 },
+            { "fuel": "hydro", "perc": 1.5 },
+            { "fuel": "solar", "perc": 0 },
+            { "fuel": "wind", "perc": 35.2 }
+          ]
+        }
+      ]
+    }
+  }
+}

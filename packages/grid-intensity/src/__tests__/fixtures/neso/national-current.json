@@ -1,0 +1,25 @@
+{
+  "description": "The current half hour endpoint, requested at 10:02:25Z. It returned the half hour that had just ended (09:30Z to 10:00Z), not the one in progress, with an actual of 249. The range endpoint had null for that half hour at 10:11:38Z and 246 from 10:15:55Z; 249 was at the time the actual of the half hour before. Suitable as a reachability probe only.",
+  "licence": "CC-BY-4.0",
+  "attribution": "Contains data from the Carbon Intensity API by National Energy System Operator (NESO), https://carbonintensity.org.uk, licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).",
+  "recordedAt": "2026-11-10T10:02:24Z",
+  "trimmed": false,
+  "request": {
+    "method": "GET",
+    "url": "https://api.carbonintensity.org.uk/intensity",
+    "headers": { "Accept": "application/json", "User-Agent": "curl/8.7.1" }
+  },
+  "response": {
+    "status": 200,
+    "headers": { "content-type": "application/json" },
+    "body": {
+      "data": [
+        {
+          "from": "2026-11-10T09:30Z",
+          "to": "2026-11-10T10:00Z",
+          "intensity": { "forecast": 250, "actual": 249, "index": "very high" }
+        }
+      ]
+    }
+  }
+}
