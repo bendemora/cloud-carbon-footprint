@@ -117,6 +117,27 @@ export const EmissionsApiMiddleware = async function (
 }
 
 /**
+ * Handles the grid intensity capability report: what each configured source
+ * can deliver for each provider region.
+ *
+ * @async
+ * @returns A response object with the report the grid-intensity-doctor command prints.
+ */
+export const GridIntensityCapabilitiesApiMiddleware = async function (
+  _req: express.Request,
+  res: express.Response,
+): Promise<void> {
+  apiLogger.info(`Grid intensity capabilities API request started`)
+  const footprintApp = new App()
+  try {
+    res.json(await footprintApp.getGridIntensityCapabilities())
+  } catch (e) {
+    apiLogger.error(`Unable to process grid intensity capabilities request.`, e)
+    res.status(500).send('Internal Server Error')
+  }
+}
+
+/**
  * Handles the fetching of cost saving recommendations along with their calculated carbon and energy savings.
  *
  * @async

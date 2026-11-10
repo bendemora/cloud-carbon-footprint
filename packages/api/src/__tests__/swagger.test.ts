@@ -33,6 +33,22 @@ describe('swaggerDocs', () => {
     expect(res.body.info.version).toEqual('1.6.0')
   })
 
+  it('should document the grid intensity capabilities endpoint and its response', async () => {
+    const res = await request(server).get('/docs.json')
+    const operation = res.body.paths['/api/grid-intensity/capabilities'].get
+    expect(
+      operation.responses['200'].content['application/json'].schema,
+    ).toEqual({
+      $ref: '#/components/schemas/GridIntensityCapabilitiesResponse',
+    })
+    const schema = res.body.components.schemas.GridIntensityCapabilitiesResponse
+    expect(schema.required).toEqual(['generatedAt', 'regions'])
+    expect(
+      schema.properties.regions.items.properties.sources.items.properties
+        .bestTier.properties.last12Months.enum,
+    ).toEqual(['A', 'B', 'C', 'D', null])
+  })
+
   it('should log the availability of the docs', () => {
     const spy = jest.spyOn(Logger.prototype, 'info')
     swaggerDocs(server, port)
