@@ -8,7 +8,7 @@ A fork of [cloud-carbon-footprint/cloud-carbon-footprint](https://github.com/clo
 
 Read these before any non-trivial change:
 
-- `docs/design/2026-11-localised-time-resolved-carbon-estimation.md`: the approved design, the phase plan (section 12) and the verification backlog (section 14). Work in phase order; each phase lists its acceptance criteria.
+- `docs/design/2026-11-localised-time-resolved-carbon-estimation.md`: the approved design, the phase plan (section 12) and the verification backlog (section 14). Work in phase order; each phase lists its acceptance criteria. Section 12 ends with the current status and the agreed order of work, which is where to check what is done and what comes next.
 - `.adr/0022-grid_intensity_source_layer.md`: the headline decision. New architectural decisions get a new ADR in `.adr/` (numbered, same format).
 - `microsite/docs/HowItWorks/Methodology.md`: the estimation model this fork keeps.
 
@@ -54,7 +54,8 @@ Do not bypass the hook. If a commit must be split to keep the hook's run meaning
 ## Where things are
 
 - `packages/core`: estimators and the energy model constants types. `packages/common`: config (`Config.ts`, env vars via `getEnvVar`), result types, the legacy `EmissionsFactors.ts`. `packages/app`: `App.getCostAndEstimates`, cache decorator and managers. `packages/aws|gcp|azure|ali|on-premise`: provider usage sources and constants. `packages/api`: Express routes under `/api`. `packages/cli`: commands as `package.json` scripts. `packages/client`: Create React App UI. `packages/integration-tests`: TestCafe.
-- Planned: `packages/grid-intensity` (design section 6) and `packages/provider-reports` (section 10).
+- `packages/grid-intensity`: the grid intensity source layer (design section 6): interfaces, sources, the resolver, the stores and the `resolveEmissionsFactors` adapter that the provider packages call.
+- Planned: `packages/provider-reports` (section 10).
 - Test fixtures live in each package's `src/__tests__/fixtures/`. External HTTP is never called in tests; mock `global.fetch` as `packages/common/src/__tests__/EmissionsFactors.test.ts` does, with recorded fixtures.
 
 ## Data and secrets
