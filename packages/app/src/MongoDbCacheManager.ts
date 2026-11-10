@@ -170,7 +170,10 @@ export default class MongoDbCacheManager extends CacheManager {
         database
           .listCollections({ name: collectionName })
           .next(async (err: Error, collectionInfo: any) => {
-            if (err) reject(err)
+            // Nothing handles a rejection of this callback's own promise, and
+            // an unhandled rejection ends the process. So a failure goes to
+            // reject(), and no query runs after one.
+            if (err) return reject(err)
 
             if (!collectionInfo) {
               resolve([{ dates: [] }])
@@ -202,23 +205,22 @@ export default class MongoDbCacheManager extends CacheManager {
               }
             }
 
-            resolve(
-              await estimates
-                .aggregate(
-                  [
-                    {
-                      $group: {
-                        _id: null,
-                        dates: {
-                          $addToSet: addToSet,
-                        },
+            estimates
+              .aggregate(
+                [
+                  {
+                    $group: {
+                      _id: null,
+                      dates: {
+                        $addToSet: addToSet,
                       },
                     },
-                  ],
-                  { allowDiskUse: true },
-                )
-                .toArray(),
-            )
+                  },
+                ],
+                { allowDiskUse: true },
+              )
+              .toArray()
+              .then(resolve, reject)
           })
       })
 
