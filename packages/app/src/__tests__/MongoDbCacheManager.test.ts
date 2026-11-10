@@ -888,6 +888,30 @@ describe('MongoDbCacheManager', () => {
       )
     })
 
+    it('reports every requested date as missing when the collection is empty', async () => {
+      const mongoDbCacheManager = new MongoDbCacheManager()
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation()
+      mockGetDates.mockReturnValue(mockMissingDates)
+      await useClient(
+        mockClientWhere({
+          listing: [undefined, { name: 'test-collection' }],
+          // $group over an empty collection returns no document at all, and
+          // here it answers before countDocuments does.
+          cachedDates: () => Promise.resolve([]),
+        }),
+      )
+
+      const missingDates = await mongoDbCacheManager.getMissingDates(
+        request,
+        'day',
+      )
+
+      expect(JSON.stringify(missingDates)).toEqual(
+        JSON.stringify(mockMissingDates),
+      )
+      expect(Logger.prototype.warn).not.toHaveBeenCalled()
+    })
+
     it('makes no further query once listing the collections has failed', async () => {
       const mongoDbCacheManager = new MongoDbCacheManager()
       const countDocuments = jest.fn()
