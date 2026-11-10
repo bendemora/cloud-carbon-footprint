@@ -39,6 +39,7 @@ export type {
 export { GridIntensityCapabilityReporter } from './CapabilityReporter'
 export type { CapabilityReporterOptions } from './CapabilityReporter'
 export {
+  createCapabilityReporter,
   ElectricityMapsRequestError,
   isElectricityMapsRequestError,
   LEGACY_ELECTRICITY_MAPS_SOURCE_ID,
@@ -59,6 +60,7 @@ export {
 } from './stores/MongoDbIntensityStore'
 export { createIntensityStore } from './stores/createIntensityStore'
 export type {
+  CapabilityReporterInput,
   EmissionsFactorsResolution,
   ResolveEmissionsFactorsOptions,
 } from './resolveEmissionsFactors'

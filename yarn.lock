@@ -4352,6 +4352,7 @@ __metadata:
     "@cloud-carbon-footprint/azure": "npm:^2.1.0"
     "@cloud-carbon-footprint/common": "npm:^3.0.0"
     "@cloud-carbon-footprint/gcp": "npm:^1.1.0"
+    "@cloud-carbon-footprint/grid-intensity": "npm:^0.1.0"
     "@cloud-carbon-footprint/on-premise": "npm:^1.0.1"
     "@google-cloud/storage": "npm:^7.19.0"
     "@sovpro/delimited-stream": "npm:^1.1.0"

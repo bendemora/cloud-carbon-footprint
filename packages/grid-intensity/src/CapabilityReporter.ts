@@ -15,7 +15,9 @@ import { deriveQualityTier } from './qualityTier'
 import {
   CapabilityReport,
   CapabilityReporter,
+  CloudProvider,
   Granularity,
+  LegacyElectricityMapsState,
   LicenceDeclaration,
   LicenceState,
   LookbackWindows,
@@ -30,6 +32,14 @@ export interface CapabilityReporterOptions {
   resolver: Pick<GridIntensityResolver, 'sourceViews'>
   /** The provider regions to report on, from the app layer. */
   regions: ProviderRegion[]
+  /**
+   * Given while the legacy Electricity Maps v3 lookup is in use: its state,
+   * and each provider's region to Electricity Maps zone map.
+   */
+  legacyElectricityMaps?: {
+    state: LegacyElectricityMapsState
+    zones: Partial<Record<CloudProvider, { [region: string]: string | null }>>
+  }
   now?: () => Date
 }
 
@@ -57,15 +67,22 @@ export class GridIntensityCapabilityReporter implements CapabilityReporter {
   constructor(private readonly options: CapabilityReporterOptions) {}
 
   async capabilities(): Promise<CapabilityReport> {
-    const { resolver, regions } = this.options
+    const { resolver, regions, legacyElectricityMaps: legacy } = this.options
     const now = (this.options.now ?? (() => new Date()))()
-    const report: CapabilityReport = { generatedAt: now, regions: [] }
+    const report: CapabilityReport = {
+      generatedAt: now,
+      ...(legacy && { legacyElectricityMaps: legacy.state }),
+      regions: [],
+    }
     for (const { provider, region } of regions) {
       const views = await resolver.sourceViews(provider, region)
       report.regions.push({
         provider,
         region,
         sources: views.map((view) => summarise(view, now)),
+        ...(legacy && {
+          legacyElectricityMapsZoneId: legacy.zones[provider]?.[region] ?? null,
+        }),
       })
     }
     return report

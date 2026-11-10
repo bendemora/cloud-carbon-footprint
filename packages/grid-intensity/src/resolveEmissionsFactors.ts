@@ -9,6 +9,10 @@ import {
   Logger,
 } from '@cloud-carbon-footprint/common'
 import {
+  GridIntensityCapabilityReporter,
+  REPORT_USAGE_GRANULARITY,
+} from './CapabilityReporter'
+import {
   addPeriod,
   addUtcMonths,
   Period,
@@ -31,11 +35,15 @@ import { deriveQualityTier, STATIC_SOURCE_ID } from './qualityTier'
 import { createIntensityStore } from './stores/createIntensityStore'
 import { gramsToTonnes, tonnesToGrams } from './units'
 import {
+  CapabilityReporter,
   CloudProvider,
+  Granularity,
   GridIntensitySource,
   IntensityResolver,
   IntensityStore,
+  LegacyElectricityMapsState,
   Provenance,
+  ProviderRegion,
 } from './types'
 
 export interface EmissionsFactorsResolution {
@@ -152,6 +160,25 @@ export const lastFullUtcDay = (now: Date = new Date()): Period => {
 let legacyLogger: ResolverLogger | undefined
 
 /**
+ * How good the legacy lookup's one hourly sample is for a usage period: the
+ * value itself for an hour of usage, an estimate for anything longer.
+ */
+const legacyQuality = (
+  usageGranularity: Granularity,
+): Pick<Provenance, 'isEstimated' | 'qualityTier'> => {
+  const isEstimated = usageGranularity !== 'hour'
+  return {
+    isEstimated,
+    qualityTier: deriveQualityTier({
+      sourceId: LEGACY_ELECTRICITY_MAPS_SOURCE_ID,
+      isEstimated,
+      intensityGranularity: 'hour',
+      usageGranularity,
+    }),
+  }
+}
+
+/**
  * A request to Electricity Maps failed (network error, a body that is not
  * JSON, an invalid token, or a server error). It is named so that code which
  * catches errors per account or subscription (Azure) can let it through and
@@ -207,7 +234,6 @@ const legacyElectricityMapsLookup = async (
   }
   if (factors === staticFactors) return null
   const usageGranularity = usageGranularityOf(periodStart, periodEnd)
-  const isEstimated = usageGranularity !== 'hour'
   return {
     factors,
     provenance: {
@@ -216,14 +242,8 @@ const legacyElectricityMapsLookup = async (
       granularity: 'hour',
       basis: 'location-consumption',
       factorType: 'lifecycle',
-      isEstimated,
+      ...legacyQuality(usageGranularity),
       licenceId: 'custom',
-      qualityTier: deriveQualityTier({
-        sourceId: LEGACY_ELECTRICITY_MAPS_SOURCE_ID,
-        isEstimated,
-        intensityGranularity: 'hour',
-        usageGranularity,
-      }),
       gCO2ePerKWh: tonnesToGrams(factors[region]),
       modelVersion: 'unversioned',
     },
@@ -311,5 +331,56 @@ export const resolveEmissionsFactors = async (
         modelVersion: 'unversioned',
       },
     }
+  }
+}
+
+export interface CapabilityReporterInput {
+  /** The provider regions to report on. */
+  regions: ProviderRegion[]
+  /** Each provider's static table, as it gives it to resolveEmissionsFactors. */
+  staticTables: StaticFactorTables
+  /** Each provider's region to Electricity Maps zone map, likewise. */
+  legacyElectricityMapsZones: Partial<
+    Record<CloudProvider, { [region: string]: string | null }>
+  >
+}
+
+/**
+ * The capability reporter for the configured sources (the doctor command and
+ * GET /api/grid-intensity/capabilities). It reports on the default resolver,
+ * so in a long-running process the report shows the capability answers and
+ * failures that estimates have met. Call shutdownDefaultResolver() at the
+ * end of a run, as after estimates.
+ *
+ * While ELECTRICITY_MAPS_TOKEN is set, the report also states that the
+ * legacy v3 lookup is in use, as resolveEmissionsFactors applies it.
+ */
+export const createCapabilityReporter = ({
+  regions,
+  staticTables: tables,
+  legacyElectricityMapsZones,
+}: CapabilityReporterInput): CapabilityReporter => {
+  Object.assign(staticTables, tables)
+  return new GridIntensityCapabilityReporter({
+    resolver: (defaultResolver ??= createDefaultResolver()),
+    regions,
+    legacyElectricityMaps: configLoader().ELECTRICITY_MAPS_TOKEN
+      ? {
+          state: legacyElectricityMapsState(),
+          zones: legacyElectricityMapsZones,
+        }
+      : undefined,
+  })
+}
+
+const legacyElectricityMapsState = (): LegacyElectricityMapsState => {
+  const { qualityTier } = legacyQuality(REPORT_USAGE_GRANULARITY)
+  return {
+    sourceId: LEGACY_ELECTRICITY_MAPS_SOURCE_ID,
+    qualityTier,
+    message:
+      `ELECTRICITY_MAPS_TOKEN is set and there is no Electricity Maps v4 source yet, so the Electricity Maps v3 lookup is in use for every region that has an Electricity Maps zone. ` +
+      `It applies one hourly sample from the start of each usage period, which is tier ${qualityTier} for the daily and longer periods CCF produces. ` +
+      `This report does not call Electricity Maps: a zone or endpoint the token has no access to falls back to the sources listed for the region, and a failed request stops an estimation run.`,
   }
 }

@@ -266,4 +266,42 @@ describe('GridIntensityCapabilityReporter', () => {
       expect(await londonEntry()).not.toHaveProperty('error')
     })
   })
+
+  describe('legacy Electricity Maps v3 lookup', () => {
+    const state = {
+      sourceId: 'electricitymaps-v3',
+      qualityTier: 'C' as const,
+      message: 'The v3 lookup is in use.',
+    }
+    const regions: ProviderRegion[] = [
+      LONDON,
+      { provider: 'AWS', region: 'Unknown' },
+      { provider: 'AWS', region: 'mars-north-1' },
+      { provider: 'GCP', region: 'europe-west2' },
+    ]
+
+    it('states that the lookup is in use and gives each region its zone, or null', async () => {
+      const result = await new GridIntensityCapabilityReporter({
+        resolver: new GridIntensityResolver({ sources: [staticSource()] }),
+        regions,
+        legacyElectricityMaps: {
+          state,
+          zones: { AWS: { 'eu-west-2': 'GB', Unknown: null } },
+        },
+        now: () => NOW,
+      }).capabilities()
+
+      expect(result.legacyElectricityMaps).toEqual(state)
+      expect(
+        result.regions.map((region) => region.legacyElectricityMapsZoneId),
+      ).toEqual(['GB', null, null, null])
+    })
+
+    it('is absent from the report when the lookup is not in use', async () => {
+      const result = await report([staticSource()], { regions })
+      expect(result).not.toHaveProperty('legacyElectricityMaps')
+      for (const region of result.regions)
+        expect(region).not.toHaveProperty('legacyElectricityMapsZoneId')
+    })
+  })
 })
