@@ -720,6 +720,42 @@ describe('MongoDbCacheManager', () => {
       limit: 1,
     }
 
+    /** A client whose collection listing and cached-dates query end as given. */
+    const mockClientWhere = ({
+      listing,
+      cachedDates,
+      countDocuments = jest.fn(),
+    }: {
+      listing: [Error?, Doc?]
+      cachedDates: () => Promise<Doc[]>
+      countDocuments?: jest.Mock
+    }): Partial<mongo.MongoClient> => ({
+      db: jest.fn().mockImplementation(() => ({
+        listCollections: jest.fn().mockImplementation(() => ({
+          next: jest.fn().mockImplementation((callback) => {
+            callback(...listing)
+          }),
+        })),
+        collection: jest.fn().mockImplementation(() => ({
+          countDocuments,
+          aggregate: mockAggregation.mockImplementation(() => ({
+            toArray: cachedDates,
+          })),
+        })),
+      })),
+      close: jest.fn(),
+      connect: jest.fn(),
+    })
+
+    const useClient = async (client: Partial<mongo.MongoClient>) => {
+      jest
+        .spyOn(MongoDbCacheManager, 'createDbConnection')
+        .mockImplementation(async () => {
+          MongoDbCacheManager.mongoClient = client as mongo.MongoClient
+        })
+      await MongoDbCacheManager.createDbConnection()
+    }
+
     beforeEach(() => {
       mockClient = {
         db: jest.fn().mockImplementation(() => ({
@@ -849,6 +885,62 @@ describe('MongoDbCacheManager', () => {
 
       expect(JSON.stringify(missingDates)).toEqual(
         JSON.stringify([moment.utc(new Date('2022-01-02'))]),
+      )
+    })
+
+    it('makes no further query once listing the collections has failed', async () => {
+      const mongoDbCacheManager = new MongoDbCacheManager()
+      const countDocuments = jest.fn()
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation()
+      mockGetDates.mockReturnValue(mockMissingDates)
+      await useClient(
+        mockClientWhere({
+          listing: [new Error('list error')],
+          // What the driver answers while the server cannot be reached.
+          // Nothing waits for this query, so its failure would be an
+          // unhandled rejection, which ends the process.
+          cachedDates: () => Promise.reject(new Error('aggregate error')),
+          countDocuments,
+        }),
+      )
+
+      const missingDates = await mongoDbCacheManager.getMissingDates(
+        request,
+        'day',
+      )
+
+      expect(Logger.prototype.warn).toHaveBeenCalledWith(
+        'There was an error getting missing dates from MongoDB: list error',
+      )
+      expect(missingDates).toEqual([])
+      expect(countDocuments).not.toHaveBeenCalled()
+      expect(mockAggregation).not.toHaveBeenCalled()
+    })
+
+    it('warns and reports nothing missing when the cached dates cannot be read', async () => {
+      const mongoDbCacheManager = new MongoDbCacheManager()
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation()
+      mockGetDates.mockReturnValue(mockMissingDates)
+      await useClient(
+        mockClientWhere({
+          listing: [undefined, { name: 'test-collection' }],
+          cachedDates: () => Promise.reject(new Error('aggregate error')),
+        }),
+      )
+
+      let timer: NodeJS.Timeout
+      const neverSettled = new Promise((resolve) => {
+        timer = setTimeout(() => resolve('never settled'), 100)
+      })
+      const missingDates = await Promise.race([
+        mongoDbCacheManager.getMissingDates(request, 'day'),
+        neverSettled,
+      ])
+      clearTimeout(timer)
+
+      expect(missingDates).toEqual([])
+      expect(Logger.prototype.warn).toHaveBeenCalledWith(
+        'There was an error getting missing dates from MongoDB: aggregate error',
       )
     })
 
