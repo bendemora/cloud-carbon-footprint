@@ -1,0 +1,43 @@
+{
+  "description": "Regional intensity for region 13 for the current half hour. Here the data property is an array with one region object, where the range form has a single object.",
+  "licence": "CC-BY-4.0",
+  "attribution": "Contains data from the Carbon Intensity API by National Energy System Operator (NESO), https://carbonintensity.org.uk, licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).",
+  "recordedAt": "2026-11-10T10:05:43Z",
+  "trimmed": false,
+  "request": {
+    "method": "GET",
+    "url": "https://api.carbonintensity.org.uk/regional/regionid/13",
+    "headers": { "Accept": "application/json", "User-Agent": "curl/8.7.1" }
+  },
+  "response": {
+    "status": 200,
+    "headers": { "content-type": "application/json" },
+    "body": {
+      "data": [
+        {
+          "regionid": 13,
+          "dnoregion": "UKPN London",
+          "shortname": "London",
+          "data": [
+            {
+              "from": "2026-11-10T09:30Z",
+              "to": "2026-11-10T10:00Z",
+              "intensity": { "forecast": 263, "index": "very high" },
+              "generationmix": [
+                { "fuel": "biomass", "perc": 6.2 },
+                { "fuel": "coal", "perc": 0 },
+                { "fuel": "imports", "perc": 3.9 },
+                { "fuel": "gas", "perc": 64.5 },
+                { "fuel": "nuclear", "perc": 9.8 },
+                { "fuel": "other", "perc": 0 },
+                { "fuel": "hydro", "perc": 0.1 },
+                { "fuel": "solar", "perc": 5.1 },
+                { "fuel": "wind", "perc": 10.4 }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

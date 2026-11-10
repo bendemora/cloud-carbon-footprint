@@ -1,0 +1,57 @@
+{
+  "description": "Regional intensity by outward postcode (CF10, central Cardiff) over one past UTC hour. It resolves to region 7 (South Wales). This form has a postcode property and no dnoregion property.",
+  "licence": "CC-BY-4.0",
+  "attribution": "Contains data from the Carbon Intensity API by National Energy System Operator (NESO), https://carbonintensity.org.uk, licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).",
+  "recordedAt": "2026-11-10T10:06:07Z",
+  "trimmed": false,
+  "request": {
+    "method": "GET",
+    "url": "https://api.carbonintensity.org.uk/regional/intensity/2026-11-03T00:01Z/2026-11-03T01:00Z/postcode/CF10",
+    "headers": { "Accept": "application/json", "User-Agent": "curl/8.7.1" }
+  },
+  "response": {
+    "status": 200,
+    "headers": { "content-type": "application/json" },
+    "body": {
+      "data": {
+        "regionid": 7,
+        "shortname": "South Wales",
+        "postcode": "CF10",
+        "data": [
+          {
+            "from": "2026-11-03T00:00Z",
+            "to": "2026-11-03T00:30Z",
+            "intensity": { "forecast": 337, "index": "very high" },
+            "generationmix": [
+              { "fuel": "biomass", "perc": 0 },
+              { "fuel": "coal", "perc": 0 },
+              { "fuel": "imports", "perc": 0 },
+              { "fuel": "gas", "perc": 85.4 },
+              { "fuel": "nuclear", "perc": 0 },
+              { "fuel": "other", "perc": 0 },
+              { "fuel": "hydro", "perc": 0 },
+              { "fuel": "solar", "perc": 0 },
+              { "fuel": "wind", "perc": 14.6 }
+            ]
+          },
+          {
+            "from": "2026-11-03T00:30Z",
+            "to": "2026-11-03T01:00Z",
+            "intensity": { "forecast": 339, "index": "very high" },
+            "generationmix": [
+              { "fuel": "biomass", "perc": 0 },
+              { "fuel": "coal", "perc": 0 },
+              { "fuel": "imports", "perc": 0 },
+              { "fuel": "gas", "perc": 86 },
+              { "fuel": "nuclear", "perc": 0 },
+              { "fuel": "other", "perc": 0 },
+              { "fuel": "hydro", "perc": 0 },
+              { "fuel": "solar", "perc": 0 },
+              { "fuel": "wind", "perc": 14 }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

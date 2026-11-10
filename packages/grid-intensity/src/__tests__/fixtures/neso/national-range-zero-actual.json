@@ -1,0 +1,45 @@
+{
+  "description": "Five consecutive half hours cut from a range of 30 days 23 hours 30 minutes (the longest range accepted). The actual value of 0 at 11:00Z sits between 34 and 41 while the generation mix for the same half hour shows 7.4 percent gas and 8.1 percent biomass, so it is taken to be a data artefact, not a real zero.",
+  "licence": "CC-BY-4.0",
+  "attribution": "Contains data from the Carbon Intensity API by National Energy System Operator (NESO), https://carbonintensity.org.uk, licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).",
+  "recordedAt": "2026-11-10T10:04:48Z",
+  "trimmed": "5 of 1488 periods kept (2026-08-06T10:00Z to 12:30Z)",
+  "request": {
+    "method": "GET",
+    "url": "https://api.carbonintensity.org.uk/intensity/2026-08-01T00:00Z/2026-08-31T23:30Z",
+    "headers": { "Accept": "application/json", "User-Agent": "curl/8.7.1" }
+  },
+  "response": {
+    "status": 200,
+    "headers": { "content-type": "application/json" },
+    "body": {
+      "data": [
+        {
+          "from": "2026-08-06T10:00Z",
+          "to": "2026-08-06T10:30Z",
+          "intensity": { "forecast": 62, "actual": 61, "index": "low" }
+        },
+        {
+          "from": "2026-08-06T10:30Z",
+          "to": "2026-08-06T11:00Z",
+          "intensity": { "forecast": 62, "actual": 34, "index": "low" }
+        },
+        {
+          "from": "2026-08-06T11:00Z",
+          "to": "2026-08-06T11:30Z",
+          "intensity": { "forecast": 62, "actual": 0, "index": "very low" }
+        },
+        {
+          "from": "2026-08-06T11:30Z",
+          "to": "2026-08-06T12:00Z",
+          "intensity": { "forecast": 64, "actual": 41, "index": "low" }
+        },
+        {
+          "from": "2026-08-06T12:00Z",
+          "to": "2026-08-06T12:30Z",
+          "intensity": { "forecast": 69, "actual": 56, "index": "low" }
+        }
+      ]
+    }
+  }
+}
