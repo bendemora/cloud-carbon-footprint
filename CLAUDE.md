@@ -57,6 +57,7 @@ Do not bypass the hook. If a commit must be split to keep the hook's run meaning
 - `packages/grid-intensity`: the grid intensity source layer (design section 6): interfaces, sources, the resolver, the stores and the `resolveEmissionsFactors` adapter that the provider packages call.
 - Planned: `packages/provider-reports` (section 10).
 - Test fixtures live in each package's `src/__tests__/fixtures/`. External HTTP is never called in tests; mock `global.fetch` as `packages/common/src/__tests__/EmissionsFactors.test.ts` does, with recorded fixtures.
+- The only tests that talk to a real service are the opt-in MongoDB live tests: `MongoDbIntensityStore.live.test.ts` in `packages/grid-intensity` and `MongoDbCacheManager.live.test.ts` in `packages/app`. They are skipped unless `MONGODB_LIVE_TESTS` holds the address of a throwaway MongoDB server, never run when `CI` is set, and use databases of their own. Run them after changing either class or the `mongodb` driver version; the header of each file has the commands.
 
 ## Data and secrets
 
