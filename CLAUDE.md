@@ -56,6 +56,7 @@ Do not bypass the hook. If a commit must be split to keep the hook's run meaning
 - `packages/core`: estimators and the energy model constants types. `packages/common`: config (`Config.ts`, env vars via `getEnvVar`), result types, the legacy `EmissionsFactors.ts`. `packages/app`: `App.getCostAndEstimates`, cache decorator and managers. `packages/aws|gcp|azure|ali|on-premise`: provider usage sources and constants. `packages/api`: Express routes under `/api`. `packages/cli`: commands as `package.json` scripts. `packages/client`: Create React App UI. `packages/integration-tests`: TestCafe.
 - Planned: `packages/grid-intensity` (design section 6) and `packages/provider-reports` (section 10).
 - Test fixtures live in each package's `src/__tests__/fixtures/`. External HTTP is never called in tests; mock `global.fetch` as `packages/common/src/__tests__/EmissionsFactors.test.ts` does, with recorded fixtures.
+- The only tests that talk to a real service are the opt-in MongoDB live tests: `MongoDbIntensityStore.live.test.ts` in `packages/grid-intensity` and `MongoDbCacheManager.live.test.ts` in `packages/app`. They are skipped unless `MONGODB_LIVE_TESTS` holds the address of a throwaway MongoDB server, never run when `CI` is set, and use databases of their own. Run them after changing either class or the `mongodb` driver version; the header of each file has the commands.
 
 ## Data and secrets
 
