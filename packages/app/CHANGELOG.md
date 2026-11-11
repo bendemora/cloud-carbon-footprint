@@ -1,5 +1,22 @@
 # @cloud-carbon-footprint/app
 
+## 2.1.0
+
+### Minor Changes
+
+- abb5aad: app: add `App.getGridIntensityCapabilities()`, the grid intensity capability report for every region in the AWS, GCP and Azure region tables (a provider with `<PROVIDER>_INCLUDE_ESTIMATES=false` is left out). grid-intensity: add `createCapabilityReporter`, which builds the report on the default resolver from the configuration. While `ELECTRICITY_MAPS_TOKEN` is set, the report states that the Electricity Maps v3 lookup is in use, that it yields tier C for daily and longer usage, and each region's Electricity Maps zone; it does not call Electricity Maps. aws, gcp, azure: export the region tables and the region to Electricity Maps zone maps (`AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES`, `GCP_REGIONS`, `GCP_DUAL_REGIONS`, `GCP_MULTI_REGIONS`, `GCP_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES`, `AZURE_REGIONS`, `AZURE_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES`). Estimates are unchanged.
+
+### Patch Changes
+
+- 766f7c3: With `CACHE_MODE=MONGODB`, an estimates collection that exists but holds no rows is no longer reported as fully cached. `MongoDbCacheManager.getMissingDates` asked for the row count and for the cached dates at the same time, and only handled the empty collection when the count answered first. When the dates answered first (about 4 calls in 10 against MongoDB 6.0 on the same machine), it logged `Cannot read properties of undefined (reading 'dates')` and reported that no date was missing, so the request was answered from the empty cache without estimating anything. An empty answer for the cached dates now means that every requested date is missing. The collection is empty after a first request that produced no estimates, because loading from a missing collection creates it.
+- 0085e7c: With `CACHE_MODE=MONGODB`, a footprint request made while MongoDB cannot be reached no longer ends the API process. `MongoDbCacheManager.getMissingDates` went on to query the collection after listing the collections had failed, and nothing handled the failure of that later query, so Node ended the process on the unhandled promise rejection (about 60 seconds after the request with the driver's default timeouts) and the client got an empty reply. Now a failed listing stops there, and a failed read of the cached dates is logged as a warning like any other failure in that method, so the request ends with the HTTP 500 that a failed load of the estimates gives, the API keeps running, and it serves requests again once MongoDB is back. The same change stops a request from hanging when the listing succeeds and the read of the cached dates then fails.
+- Updated dependencies [abb5aad]
+- Updated dependencies [db58cda]
+  - @cloud-carbon-footprint/grid-intensity@0.2.0
+  - @cloud-carbon-footprint/aws@1.2.0
+  - @cloud-carbon-footprint/gcp@1.2.0
+  - @cloud-carbon-footprint/azure@2.2.0
+
 ## 2.0.1
 
 ### Patch Changes
