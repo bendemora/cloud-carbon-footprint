@@ -54,6 +54,33 @@ AWS, Google Cloud and Azure service estimates computed from billing data (Cost a
 
 Estimates from the cloud usage APIs (billing data turned off), rows cached before the upgrade, and Alibaba Cloud and on-premise estimates do not carry it. Provenance roughly doubles the size of each service estimate in the API response and in the estimates cache. Neither the API response nor the MongoDB cache has a size limit that this affects. With the JSON file cache (local filesystem or Google Cloud Storage), one period's estimates must stay under about 512 MiB of JSON, and provenance halves the number of rows that fit, to about 1.1 million; see [Data Persistence and Caching](DataPersistenceAndCaching.md).
 
+### Checking what your configuration can deliver
+
+The grid intensity doctor reports, for every AWS, Google Cloud and Azure region, what each configured grid intensity source can deliver. It needs no cloud credentials and does not call Electricity Maps. A provider whose estimates are turned off (for example `AWS_INCLUDE_ESTIMATES=false`) is left out.
+
+```sh
+yarn workspace @cloud-carbon-footprint/cli grid-intensity-doctor
+```
+
+It prints one row per region and source. With the default configuration the only source is `static`, the default emissions factors:
+
+```
+| Provider | Region    | Source | Zone          | Last 24 hours | Last 30 days | Last 12 months | Licence | Error
+| AWS      | us-east-1 | static | aws:us-east-1 | D             | D            | D              | open    |
+| AWS      | us-east-2 | static | aws:us-east-2 | D             | D            | D              | open    |
+```
+
+- **Zone** is the source's grid zone for the region, or `-` when it has none.
+- **Last 24 hours**, **Last 30 days** and **Last 12 months** give the best quality tier the source can deliver for a day of usage in that window, from A to D as described above, or `-` when it can deliver none. A day is the finest usage period CCF produces, so hourly data shows as tier B. A percentage after the tier is the share of the days in the window that the source can serve, shown when that is not all of them.
+- **Licence** is `open`, `acknowledged`, `needs-acknowledgement` or `unavailable`. A source whose licence needs acknowledgement is not used until it is listed in `GRID_INTENSITY_LICENCE_ACKNOWLEDGEMENTS`. `unavailable` means the source has no zone or no data for the region.
+- **Error** shows a probe of the source that failed, or the reason CCF has stopped asking the source for that zone.
+
+Below the table the doctor lists the attribution text of each source.
+
+With `ELECTRICITY_MAPS_TOKEN` set, the doctor also states that the Electricity Maps lookup described above is in use and that its estimates are tier C (one hourly sample applied to a day or longer), and adds a column with each region's Electricity Maps zone. Regions without a zone keep the default factors. The doctor does not call Electricity Maps, so it does not show whether your token has access to a zone.
+
+The API serves the same report as JSON at `GET /api/grid-intensity/capabilities`.
+
 ### Additional Notes
 
 - If you do not have access to the Electricity Maps API, you can still use CCF with the default emissions factors. Simply do not configure the tool to use the Electricity Maps API, and it will use the default factors instead.

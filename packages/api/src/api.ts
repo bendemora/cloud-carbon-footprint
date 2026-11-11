@@ -7,6 +7,7 @@ import { setConfig, CCFConfig } from '@cloud-carbon-footprint/common'
 import {
   FootprintApiMiddleware,
   EmissionsApiMiddleware,
+  GridIntensityCapabilitiesApiMiddleware,
   RecommendationsApiMiddleware,
 } from './middleware'
 
@@ -166,6 +167,28 @@ export const createRouter = (config?: CCFConfig) => {
    *                $ref: '#/components/schemas/RecommendationsResponse'
    */
   router.get('/recommendations', RecommendationsApiMiddleware)
+
+  /**
+   * @openapi
+   * /api/grid-intensity/capabilities:
+   *  get:
+   *     tags:
+   *     - Grid Intensity
+   *     description: Reports, for every region of the cloud providers whose estimates are included, what each configured grid intensity source can deliver (its zone, the best quality tier for the last 24 hours, 30 days and 12 months, the licence state, any error and the attribution text). It is the report the grid-intensity-doctor command prints. It calls no data endpoint of any source.
+   *     responses:
+   *       200:
+   *         description: Success
+   *         content:
+   *           application/json:
+   *            schema:
+   *              $ref: '#/components/schemas/GridIntensityCapabilitiesResponse'
+   *       500:
+   *         description: Internal Server Error
+   */
+  router.get(
+    '/grid-intensity/capabilities',
+    GridIntensityCapabilitiesApiMiddleware,
+  )
 
   /**
    * @openapi

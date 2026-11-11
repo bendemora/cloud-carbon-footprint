@@ -24,6 +24,7 @@ The API has several endpoints you can query for emissions data:
 - `/footprint` - Gets calculated energy and carbon estimates for a given date range
 - `/regions/emissions-factors` - Gets the carbon intensity (CO2e/kWh) of all cloud provider regions
 - `/recommendations` - Gets recommendations from cloud providers and their estimated carbon and energy impact
+- `/grid-intensity/capabilities` - Reports what each configured grid intensity source can deliver for each cloud provider region (see [Checking what your configuration can deliver](../ConfigurationOptions/EmissionsFactors.md#checking-what-your-configuration-can-deliver))
 
 ### Documentation
 

@@ -119,3 +119,92 @@ components:
           type: number
         recommendationOptions?:
           type: object
+    GridIntensityCapabilitiesResponse:
+      type: object
+      description: What each configured grid intensity source can deliver for each provider region. Tiers are for a day of usage, the finest usage period the estimates have.
+      required: [generatedAt, regions]
+      properties:
+        generatedAt:
+          type: string
+          format: date-time
+        legacyElectricityMaps:
+          type: object
+          description: Present only while ELECTRICITY_MAPS_TOKEN is set and no Electricity Maps v4 source exists. The Electricity Maps v3 lookup is then applied before the sources, for every region that has an Electricity Maps zone. The report does not call Electricity Maps.
+          required: [sourceId, qualityTier, message]
+          properties:
+            sourceId:
+              type: string
+              description: The source id on the provenance of the estimates it serves (electricitymaps-v3)
+            qualityTier:
+              type: string
+              enum: [A, B, C, D]
+              description: The tier of the estimates it serves
+            message:
+              type: string
+              description: The state in plain words
+        regions:
+          type: array
+          items:
+            type: object
+            required: [provider, region, sources]
+            properties:
+              provider:
+                type: string
+                enum: [AWS, GCP, AZURE]
+              region:
+                type: string
+              legacyElectricityMapsZoneId:
+                type: string
+                nullable: true
+                description: Present only with legacyElectricityMaps. The Electricity Maps zone the v3 lookup uses for the region, or null when it has none and the region is left to the sources.
+              sources:
+                type: array
+                description: One entry per configured source, in GRID_INTENSITY_SOURCES order
+                items:
+                  type: object
+                  required: [sourceId, zoneId, licenceState, bestTier, coverage]
+                  properties:
+                    sourceId:
+                      type: string
+                    zoneId:
+                      type: string
+                      nullable: true
+                      description: The source's grid zone for the region, or null when it has none
+                    licenceState:
+                      type: string
+                      enum: [open, acknowledged, needs-acknowledgement, unavailable]
+                      description: open needs no acknowledgement. acknowledged and needs-acknowledgement say whether the source is listed in GRID_INTENSITY_LICENCE_ACKNOWLEDGEMENTS, and a source that needs acknowledgement is not used. unavailable means the source has no zone or no data for the region.
+                    bestTier:
+                      type: object
+                      description: The best quality tier the source can deliver for a day of usage in each window ending now, or null when it can deliver none. It is what the source offers, also for a source that needs acknowledgement.
+                      required: [last24Hours, last30Days, last12Months]
+                      properties:
+                        last24Hours:
+                          type: string
+                          enum: [A, B, C, D, null]
+                          nullable: true
+                        last30Days:
+                          type: string
+                          enum: [A, B, C, D, null]
+                          nullable: true
+                        last12Months:
+                          type: string
+                          enum: [A, B, C, D, null]
+                          nullable: true
+                    coverage:
+                      type: object
+                      description: The share of the UTC days in each window that the source can serve, in whole or in part, from 0 to 1. A short lookback or late data shows here.
+                      required: [last24Hours, last30Days, last12Months]
+                      properties:
+                        last24Hours:
+                          type: number
+                        last30Days:
+                          type: number
+                        last12Months:
+                          type: number
+                    attribution:
+                      type: string
+                      description: Text to show wherever the source's data for the zone is shown
+                    error:
+                      type: string
+                      description: A failed or unauthenticated probe of the source, or the reason the fetches of the zone are stopped
