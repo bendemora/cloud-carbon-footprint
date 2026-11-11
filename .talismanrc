@@ -110,13 +110,13 @@ fileignoreconfig:
 - filename: docker/nginx.conf
   checksum: a4632d785a11f199217d4229a40eba5a38180d9945d96799dc9b5efc6a3bc06e
 - filename: docs/design/2026-11-localised-time-resolved-carbon-estimation.md
-  checksum: 8709bd0e9c70c88db22db368093f96a15f389f8e157cb2ab179c4416cd802db5
+  checksum: 782c06f51dd5c6b9521ff2754ce14942d6cc50b5ffd36566250abecbb87248db
 - filename: microsite/blog/2023-08-23-ccf-on-vm.md
   checksum: 84e94d40daf06c50f7b0e26d8d73a300d967279a87612e991e417530bfb8774c
 - filename: microsite/docs/ClassifyingUsageTypes.md
   checksum: f4b232851337efec90c4a88271cdf4cde2a9d732f0f69824223f1dcf7c6b8aaa
 - filename: microsite/docs/ConfigurationOptions/EmissionsFactors.md
-  checksum: a633b364ed7e8e9c6f268c5d48d14bc07f19cd7af87931288f61deaa0fcf4226
+  checksum: ec5b7b82383e7acd5e12ac05d9abb21d3eb1c2f0e9e0e7f12b952a171f70334b
 - filename: microsite/docs/ConfigurationOptions/PerformanceConsiderations.md
   checksum: f98b207c28550e3f44b27a47ebb0a5553c28318edaaf2f490ba94856a082badb
 - filename: microsite/docs/CreatingALookupTable.md
