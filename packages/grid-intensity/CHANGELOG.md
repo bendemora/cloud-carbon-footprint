@@ -1,5 +1,12 @@
 # @cloud-carbon-footprint/grid-intensity
 
+## 0.2.0
+
+### Minor Changes
+
+- abb5aad: app: add `App.getGridIntensityCapabilities()`, the grid intensity capability report for every region in the AWS, GCP and Azure region tables (a provider with `<PROVIDER>_INCLUDE_ESTIMATES=false` is left out). grid-intensity: add `createCapabilityReporter`, which builds the report on the default resolver from the configuration. While `ELECTRICITY_MAPS_TOKEN` is set, the report states that the Electricity Maps v3 lookup is in use, that it yields tier C for daily and longer usage, and each region's Electricity Maps zone; it does not call Electricity Maps. aws, gcp, azure: export the region tables and the region to Electricity Maps zone maps (`AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES`, `GCP_REGIONS`, `GCP_DUAL_REGIONS`, `GCP_MULTI_REGIONS`, `GCP_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES`, `AZURE_REGIONS`, `AZURE_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES`). Estimates are unchanged.
+- db58cda: grid-intensity: add `GridIntensityCapabilityReporter`, the report behind the doctor command and the capabilities endpoint (design section 6.5). For each provider region and each source of a resolver it gives the source's zone, the licence state (`open`, `acknowledged`, `needs-acknowledgement`, `unavailable`), the best quality tier the source can deliver for a day of usage in the last 24 hours, 30 days and 12 months, the share of each window's days it can serve, the attribution text and any error. `GridIntensityResolver.sourceViews` gives what the resolver knows about each source for a region: the capability answer it holds, the reason a zone's fetches are stopped, and the source's probe answer, which it now keeps for the capability TTL. `SourceCapabilitySummary` gains `coverage` and `attribution`. Estimates are unchanged.
+
 ## 0.1.0
 
 ### Minor Changes
