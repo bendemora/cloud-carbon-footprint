@@ -18,6 +18,12 @@ export { requiresAcknowledgement } from './licence'
 export { STATIC_SOURCE_ID, deriveQualityTier } from './qualityTier'
 export type { QualityTierInput } from './qualityTier'
 export { gramsToTonnes, tonnesToGrams } from './units'
+export {
+  GRID_ZONE_REGISTRY_VERSION,
+  GRID_ZONES,
+  gridZoneOf,
+} from './registry/gridZones'
+export type { GridZoneMap } from './registry/gridZones'
 export { StaticSource } from './sources/StaticSource'
 export type {
   StaticFactors,
@@ -40,9 +46,6 @@ export { GridIntensityCapabilityReporter } from './CapabilityReporter'
 export type { CapabilityReporterOptions } from './CapabilityReporter'
 export {
   createCapabilityReporter,
-  ElectricityMapsRequestError,
-  isElectricityMapsRequestError,
-  LEGACY_ELECTRICITY_MAPS_SOURCE_ID,
   lastFullUtcDay,
   resetDefaultResolver,
   resolveEmissionsFactors,

@@ -20,7 +20,6 @@ import {
 } from '@cloud-carbon-footprint/core'
 
 import { GCP_CLOUD_CONSTANTS, getGCPEmissionsFactors } from '../domain'
-import { GCP_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES } from '../lib/GCPRegions'
 import { tonnesToGrams } from '@cloud-carbon-footprint/grid-intensity'
 import BillingExportTable, { buildTagQuery } from '../lib/BillingExportTable'
 import {
@@ -186,29 +185,21 @@ describe('GCP BillingExportTable Service', () => {
     ).getEstimates(startDate, endDate, grouping)
 
     expect(mockResolveCalls.length).toBeGreaterThan(0)
-    for (const [
-      provider,
-      region,
-      start,
-      end,
-      table,
-      options,
-    ] of mockResolveCalls as [
-      string,
-      string,
-      Date,
-      Date,
-      unknown,
-      { legacyElectricityMapsZones: unknown },
-    ][]) {
+    for (const call of mockResolveCalls) {
+      // provider, region, period start, period end and the static table
+      expect(call).toHaveLength(5)
+      const [provider, region, start, end, table] = call as [
+        string,
+        string,
+        Date,
+        Date,
+        unknown,
+      ]
       expect(provider).toBe('GCP')
       expect(region).toEqual(expect.any(String))
       // a day grouping: one whole day from the row's timestamp, exclusive end
       expect(end.getTime() - start.getTime()).toBe(24 * 60 * 60 * 1000)
       expect(table).toEqual({ factors: getGCPEmissionsFactors })
-      expect(options.legacyElectricityMapsZones).toBe(
-        GCP_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-      )
     }
   })
 
@@ -269,7 +260,7 @@ describe('GCP BillingExportTable Service', () => {
     it('applies the resolved intensity and its provenance to unknown-usage rows as well', async () => {
       const liveTonnesPerKWh = 0.0001
       const liveProvenance = {
-        sourceId: 'electricitymaps-v3',
+        sourceId: 'live-source',
         zoneId: 'TEST',
         granularity: 'hour',
         basis: 'location-consumption',

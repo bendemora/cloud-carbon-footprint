@@ -4,11 +4,11 @@ Design document for the next stage of this fork of Cloud Carbon Footprint (CCF).
 
 | | |
 |---|---|
-| Status | Concepts approved by the project owner on 2026-11-05. Detailed design open for refinement during implementation. |
+| Status | Concepts approved by the project owner on 2026-11-05. Detailed design open for refinement during implementation. Electricity Maps was taken out of the design on 2026-11-12 (ADR 0026). |
 | Owner | Ben de Mora |
 | Audience | Build sessions in Claude Code, and contributors once the project is published |
 | Baseline | Fork trunk at upstream `f584c54` (CCF release line 2.x) plus PRs #1 to #3 |
-| Related | `.adr/0022-grid_intensity_source_layer.md`, `CLAUDE.md` |
+| Related | `.adr/0022-grid_intensity_source_layer.md`, `.adr/0026-grid_intensity_from_primary_publishers.md`, `CLAUDE.md` |
 
 How to read this: sections 1 to 3 say what we are building and why. Sections 4 to 11 are the design. Section 12 is the phase plan with acceptance criteria, which is the order in which Claude Code sessions should work. Section 14 lists what still has to be verified against live services before the relevant phase starts. Facts that were checked against code or documentation are stated plainly; anything inferred or assumed is marked as such.
 
@@ -18,7 +18,7 @@ CCF today is a model, not a measurement: it converts billing usage to kilowatt-h
 
 On top of that layer it adds: hourly usage for the providers whose billing data supports it (AWS, GCP); availability-zone attribution of usage, labelled as regional intensity applied to zone-level usage; a published, versioned factor table of expected energy and carbon per unit of usage by service and region; calibration of the model against the providers' own monthly carbon reports; and an export in a FOCUS-aligned shape that loads into FinOps tooling such as Ternary through its Bring Your Own Data path.
 
-The project is open-source first. Any data source with contractual terms (Electricity Maps commercial plans, purchased datasets, WattTime) is a plug-in that a deployment enables with its own credentials or files. The tool never ships, caches beyond permitted retention, or redistributes licensed data, and it makes the entitlement a user has, and the accuracy tier that entitlement buys, visible in one command.
+The project is open-source first. The live sources it builds in read the organisations that publish grid data themselves: system operators, market operators and public agencies, or the official body they publish through (ADR 0026). No tier needs a paid subscription. Data with contractual terms, a purchased dataset for example, is something a deployment loads itself, with its own files and an explicit acknowledgement. The tool never ships, caches beyond permitted retention, or redistributes licensed data, and it makes the sources a deployment can use, and the accuracy tier they give, visible in one command.
 
 ## 2. Goals and non-goals
 
@@ -56,15 +56,14 @@ Paths are relative to the repo root. Identifiers are as they appear in the sourc
 - `GroupBy` is `day | week | month | quarter | year` (`packages/common/src/Config.ts`). AWS truncates in Athena: `DATE(DATE_TRUNC('<grouping>', line_item_usage_start_date)) AS timestamp` (`packages/aws/src/lib/CostAndUsageReports.ts`, `getUsage`). GCP truncates in BigQuery: `DATE_TRUNC(DATE(usage_start_time), <grouping>)` (`packages/gcp/src/lib/BillingExportTable.ts`). Azure consumption rows are daily and are bucketed afterwards (`packages/azure/src/lib/ConsumptionManagement.ts`, `updateTimestampByGrouping`).
 - Neither the AWS nor the GCP query selects an availability zone. AWS selects `product_region`; GCP selects `ifnull(location.region, location.location)`. `BillingDataRow` (`packages/core/src/BillingDataRow.ts`) has no zone field.
 
-### 3.3 The existing Electricity Maps integration
+### 3.3 The Electricity Maps integration the fork inherited (removed)
 
-`packages/common/src/EmissionsFactors.ts`:
+Upstream CCF could replace the static factor with a value from Electricity Maps. ADR 0026 removed that integration on 2026-11-12. What it did is recorded here because its faults shaped the source layer.
 
-- `getEmissionsFactors(region, dateTime, emissionsFactors, mappedRegionsToElectricityMapZones, logger)` calls `GET https://api.electricitymap.org/v3/carbon-intensity/past?zone=<zone>&datetime=<dateTime>` with the `auth-token` header when `ELECTRICITY_MAPS_TOKEN` is set and a zone mapping exists, and memoises per `(dateTime, zone)` in a module-level object that is never persisted.
-- The `dateTime` passed in is the start of the truncated usage period (midnight UTC of the day, or the first day of the month). The `past` endpoint returns a single hourly value, so the current integration applies the midnight-hour intensity of the period's first day to the whole period. For a monthly grouping that is one hour out of 720. The documentation (`microsite/docs/ConfigurationOptions/EmissionsFactors.md`) describes this as "daily carbon intensity factors", which it is not.
-- A zone the token cannot access returns a body without `carbonIntensity`; the code falls back to the static factor with a warning per row and repeats the failing call for every row of that zone and period (no negative caching).
-- The region-to-zone maps are hand-maintained per provider (`AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES` in `packages/aws/src/lib/AWSRegions.ts`, and the GCP and Azure equivalents). ALI and on-premise do not call `getEmissionsFactors` at all.
-- The API is now v4 (section 5.2); v3 is what the code calls. The docs page also misspells the variable (`ELECTRICTY_MAPS_TOKEN`).
+- `getEmissionsFactors(region, dateTime, emissionsFactors, mappedRegionsToElectricityMapZones, logger)` in `packages/common/src/EmissionsFactors.ts` called `GET https://api.electricitymap.org/v3/carbon-intensity/past?zone=<zone>&datetime=<dateTime>` with the `auth-token` header when `ELECTRICITY_MAPS_TOKEN` was set and a zone mapping existed, and memoised per `(dateTime, zone)` in a module-level object that was never persisted.
+- The `dateTime` passed in was the start of the truncated usage period (midnight UTC of the day, or the first day of the month). The `past` endpoint returns a single hourly value, so the integration applied the midnight-hour intensity of the period's first day to the whole period. For a monthly grouping that is one hour out of 720.
+- A zone the token could not access returned a body without `carbonIntensity`; the code fell back to the static factor with a warning per row and repeated the failing call for every row of that zone and period (no negative caching).
+- The region-to-zone maps were hand-maintained per provider (`AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES` in `packages/aws/src/lib/AWSRegions.ts`, and the GCP and Azure equivalents). They are kept as the grid zone registry (section 5.5). ALI and on-premise never called `getEmissionsFactors`.
 
 ### 3.4 Other relevant facts
 
@@ -92,28 +91,25 @@ Facts below were checked against the sources' own documentation on 2026-11-05 un
 | Source | Coverage | Granularity | Lookback | Basis | Auth | Terms | Notes |
 |---|---|---|---|---|---|---|---|
 | Static annual factors (CCF constants) | All regions the provider packages define | Annual | Any | Location (GCP optionally CFE-adjusted) | None | Apache-2.0 (code) | Always available. Quality tier D. |
-| Electricity Maps API v4 | 130+ zones; `dataCenterProvider` and `dataCenterRegion` parameters map cloud regions to zones on their side | 5 min, 15 min, hourly, daily, monthly (`temporalGranularity`) | `past-range`: 10 days per call hourly, 100 days daily; commercial plans include 3 months trailing history, longer by contract | Location; `emissionFactorType` lifecycle or direct; `flowTraced` default true (consumption-based) | `auth-token` header | Commercial: annual subscription per signal (carbon intensity EUR 6,000/year listed). Free tier: non-commercial; reported as one zone; endpoint scope not authoritatively documented (verify) | `GET /v4/zones` with a token lists the zones and endpoints that token may call. This is the capability probe. |
-| Electricity Maps datasets (CSV) | Per zone | 5 min to hourly, daily | Multi-year (paid); 5 free downloads, non-commercial | Location | File | Per dataset terms | Loaded through the file source (5.4). |
-| NESO Carbon Intensity API (Great Britain) | National plus 14 GB regions | 30 min, actual and forecast | Since 2017-09-26 | Location; production-based (NESO methodology) | None | CC BY 4.0 | `https://api.carbonintensity.org.uk`. Covers AWS eu-west-2, Azure UK South and UK West, GCP europe-west2. |
+| NESO Carbon Intensity API (Great Britain) | National, actual and forecast. Regional, forecast only: 14 DNO regions and the England, Scotland, Wales and GB aggregates | 30 min. Actual for the national series only. Forecast about 2 days ahead | National from 2017-09-11T23:00Z, regional from 2018-05-10T23:30Z | Location; consumption-based (generation plus interconnector imports over demand, corrected for losses); direct CO2 factors, gCO2/kWh not gCO2e/kWh | None | CC BY 4.0; API terms of use with an unpublished rate limit; no prescribed attribution wording | `https://api.carbonintensity.org.uk`. Covers AWS eu-west-2, Azure UK South and UK West, GCP europe-west2. Range requests must be under 31 days (documentation says 14). GB cloud regions resolve to the national series. This row was checked against the live API and NESO's documentation on 2026-11-10; see `docs/design/spikes/2026-11-neso.md`. The regional start date was checked for one region (13). |
 | ENTSO-E Transparency Platform | EU bidding zones | 15 min or 60 min generation per production type (document A75) | Multi-year | Derived: production mix converted with per-fuel factors (5.3); production-based | Security token (free registration) | Free; a published list of items that may be re-used without prior agreement. Confirm A75 is on it (verify) | Covers eu-central-1 (DE-LU), eu-west-1 (IE), eu-west-3 (FR), eu-north-1 (SE3), eu-south-1 (IT), and the GCP and Azure European regions. |
 | EIA Open Data API v2 (United States) | Balancing authorities | Hourly generation by fuel type (`electricity/rto/fuel-type-data`, verify route and facets) | Multi-year | Derived as above | Free API key, passed in the URL | Public domain; attribution requested | 5,000 rows per request; throttle per their terms. Covers all US regions by balancing authority. |
-| WattTime | Global (plan dependent) | 5 min marginal; also average | Plan dependent | Marginal (MOER) and average | Token | Commercial; free tier is index only | Later phase, optional. Marginal intensity answers "when to run" better than average but is a different quantity; keep it labelled. |
-| BYO dataset (file source) | Whatever the file contains | As declared per row | As the file | As declared | None | As declared by the operator | Schema in 5.4. The commercial escape hatch. |
+| BYO dataset (file source) | Whatever the file contains | As declared per row | As the file | As declared | None | As declared by the operator | Schema in 5.4. The route for data a deployment has obtained itself. |
 
-Sources not in this list are added by implementing one interface (section 6.1).
+Every live source built in reads a primary publisher: the system operator, market operator or public agency that publishes the data, or the official body it publishes through, as ENTSO-E is for the European operators and EIA for the United States balancing authorities (ADR 0026). The static factors are not live data; they are constants that upstream CCF compiled, and section 14, item 9, records where the Google Cloud ones come from. Services that republish or model the publishers' data are not built in. Electricity Maps and WattTime, which earlier versions of this table listed, are the two that were considered. A deployment that holds such data can load it through the file source (5.4). Sources not in this list are added by implementing one interface (section 6.1).
 
-### 5.2 Electricity Maps specifics
+### 5.2 Electricity Maps (removed)
 
-- Base path moves to `/v4`. Use `GET /v4/carbon-intensity/past-range?zone=…&start=…&end=…&temporalGranularity=hourly` in 10-day windows, or `temporalGranularity=daily` in 100-day windows for daily usage. Do not use `past` for anything other than single-point lookups.
-- Prefer `dataCenterProvider=<aws|gcp|azure>&dataCenterRegion=<region>` to their own mapping when the token permits it, and fall back to our registry (5.5). Their accepted provider values are not enumerated in the reference (verify in the Phase 1 spike).
-- `emissionFactorType` and `flowTraced` are configuration with defaults `lifecycle` and `true`, recorded in provenance. Note that NESO and the mix-derived sources are production-based (no import tracing); mixing bases in one report is allowed but must be visible in the `IntensityBasis` field.
-- Probe `GET /v4/zones` with the token at startup and cache the answer for `GRID_INTENSITY_CAPABILITY_TTL_HOURS` (default 24). A zone absent from the answer, or lacking the needed endpoint, is treated as unavailable without making data calls.
-- Negative-cache plan and auth failures per zone for the TTL.
-- Response field names for v4 are not in the public reference; capture them in recorded fixtures during the spike and assert on them in contract tests.
+This section described the Electricity Maps v4 source. ADR 0026 cancelled that source and removed the v3 lookup the fork inherited (section 3.3), so there is nothing to build here. The heading is kept so that section numbers used elsewhere stay valid.
+
+Two points made here apply to every source and still hold:
+
+- Sources differ in accounting basis and factor type, and the difference is never hidden. Mixing bases in one report is allowed but must be visible in the `IntensityBasis` field. Section 5.3 gives the basis of intensity derived from a generation mix, and `docs/design/spikes/2026-11-neso.md` gives NESO's.
+- A failed capability probe or a refused request is remembered per zone for `GRID_INTENSITY_CAPABILITY_TTL_HOURS` (default 24), so a source that cannot serve a zone is not called again for every row.
 
 ### 5.3 Deriving intensity from a generation mix (ENTSO-E, EIA)
 
-Intensity for an interval = sum over fuels of (generation share × factor for that fuel). Factors are a versioned table in the grid-intensity package, defaulting to IPCC 2014 lifecycle medians (the same basis Electricity Maps documents for its default), overridable by configuration. Record `IntensityFactorType=lifecycle` and `IntensityBasis=production` on these points. Unknown or "other" fuel categories use a documented default and set `IntensityEstimated=true`. Imports are not traced in this programme; that is the main systematic difference from Electricity Maps' flow-traced numbers and it must be stated in the methodology page.
+Intensity for an interval = sum over fuels of (generation share × factor for that fuel). Factors are a versioned table in the grid-intensity package, defaulting to IPCC 2014 lifecycle medians, overridable by configuration. Record `IntensityFactorType=lifecycle` and `IntensityBasis=production` on these points. Unknown or "other" fuel categories use a documented default and set `IntensityEstimated=true`. Imports are not traced in this programme, so a zone that imports much of its electricity is described by what it generates and not by what it consumes. That limit must be stated in the methodology page.
 
 ### 5.4 BYO dataset schema (file source)
 
@@ -122,7 +118,7 @@ CSV or Parquet files in `GRID_INTENSITY_DATASET_DIR`, one or more files, any par
 | Column | Type | Required | Notes |
 |---|---|---|---|
 | `zone_id` | string | yes | The zone identifier in the namespace given by `zone_namespace` |
-| `zone_namespace` | string | yes | `electricitymaps`, `entsoe`, `neso`, `eia`, or `custom` |
+| `zone_namespace` | string | yes | `grid-zone` (the identifiers of the grid zone registry, 5.5), `entsoe`, `neso`, `eia`, or `custom` |
 | `period_start_utc` | timestamp | yes | ISO 8601, UTC |
 | `period_end_utc` | timestamp | yes | Exclusive end |
 | `gco2e_per_kwh` | number | yes | |
@@ -133,29 +129,26 @@ CSV or Parquet files in `GRID_INTENSITY_DATASET_DIR`, one or more files, any par
 | `licence_id` | string | yes | One of the licence ids in 6.3 |
 | `attribution` | string | no | Attribution text required by the licence |
 
-A purchased Electricity Maps dataset, or any vendor's export, is converted to this shape once (a small converter CLI ships for the Electricity Maps CSV layout) and then used by the resolver like any other source. This is the primary commercial path for users who have bought historical data rather than live API access.
+A dataset a deployment has obtained elsewhere, bought or not, is converted to this shape once by its owner and then used by the resolver like any other source. The tool ships no converter for any vendor's layout (ADR 0026).
 
-### 5.5 Zone mapping registry
+### 5.5 Grid zone registry
 
-A single JSON registry in `packages/grid-intensity/src/registry/regions.json`, seeded from the three existing `*_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES` maps and extended per source:
+`packages/grid-intensity/src/registry/gridZones.ts` maps the AWS, GCP and Azure regions to the electricity grid each is on, or to null where the grid is not known. It was seeded from the three region-to-zone maps the provider packages held for the Electricity Maps lookup (section 3.3), which ADR 0026 kept when it removed the lookup.
 
-```json
-{
-  "aws:eu-west-2": {
-    "electricitymaps": "GB",
-    "neso": { "regionId": 13, "name": "London" },
-    "entsoe": null,
-    "eia": null,
-    "notes": "AWS London region; NESO region chosen by data-centre location (assumption, verify)"
-  }
-}
-```
+A grid zone identifier is a country code, followed by a grid area where the zone list divides the country: a bidding zone (`SE-SE3`, `NO-NO1`, `IT-NO`), a balancing authority (`US-MIDA-PJM`, `US-CAL-CISO`), a market region (`AU-NSW`) or a regional system (`IN-WE`, `JP-TK`, `BR-CS`). The identifiers are the ones the inherited maps used, unchanged. Their naming follows the zone list of the open `electricitymaps-contrib` repository, which upstream CCF adopted. The registry takes nothing else from Electricity Maps.
 
-Each entry carries a `notes` field and the registry has a `version`. Tests assert every region in each provider's region enum has an entry (null is allowed and means "static factor only"). The registry is the one place a contributor edits to add coverage.
+A cloud region reaches a source's data in two steps:
+
+1. Region to grid zone: the registry. `gridZoneOf(provider, region)` answers it, and the capability report shows it for every region (section 6.5).
+2. Grid zone to the source's own zone: each source holds that table for the zones it serves, for example `GB` to the NESO national series, or a grid zone to an ENTSO-E area code or an EIA balancing authority code. A source's `mapRegion` composes the two steps.
+
+So adding a cloud region is one registry entry, and adding a source is one table keyed by grid zone. Where a source needs a choice finer than the grid zone (a NESO regional series for a data centre's location, for example), it holds that as an exception keyed by provider and region; `docs/design/spikes/2026-11-neso.md`, section 8.3, records the candidates for NESO.
+
+A test in each provider package asserts that the registry names only regions of that provider's region table. A region that is absent or null has no grid zone and is served by the static factors only. The registry carries a version number, raised whenever a mapping changes. No output carries the version yet: it is meant for the export manifest (section 11), so that a dataset says which registry mapped its regions. The inherited mappings have not been checked against the providers' own location data; that is part of Phase 2 ("registry with full coverage tests"). One pair looks inconsistent as it stands: AWS `us-east-2` (US East (Ohio)) is on `US-MIDW-MISO`, while GCP `us-east5` (Columbus, Ohio, by Google's region list) is on `US-MIDA-PJM`. Unless the two providers' Ohio sites are on different grids, one entry is wrong (inferred, not checked). It matters from the first source that covers the United States. A comparison made on 2026-11-12 for the review of this change gives the check somewhere to start: the data centre list of the open `electricitymaps-contrib` repository (`config/data_centers/data_centers.json` at commit `2faa955a`) covers 110 of the registry's entries, agrees with 104 and differs on six: AWS `us-east-2` (it has `US-MIDA-PJM`) and `ca-central-1` (`CA-QC`), GCP `us-central1` (`US-CENT-SWPP`), and Azure `NorthCentralUs` (`US-MIDA-PJM`), `westus2` (`US-NW-BPAT`) and `westus3` (`US-SW-AZPS`). Which side is right was not checked, and nothing was copied from that list. The registry also disagrees with itself in places the check should start with, all inherited. Azure's Southeast Asia is in the Azure region table under two names: `apsoutheast` is on `SG`, and `southeastasia` has no entry. AWS `ap-east-1` is on `HK`, while GCP `asia-east2` and Azure `apeast` are null and Azure `eastasia` has no entry. AWS `me-central-1` is on `AE`, while Azure `uaecentral` and `uaenorth` are null. Of Azure's country-level names, `uk`, `germany` and `unitedstates` have a zone and `france`, `switzerland`, `korea` and `southafrica` have none. That these names are the same places is general knowledge of the providers' region lists and was not checked.
 
 ## 6. The grid-intensity package
 
-New workspace package `@cloud-carbon-footprint/grid-intensity` at `packages/grid-intensity`. Depends on `common` only; `aws`, `gcp`, `azure`, `ali`, `on-premise` and `app` depend on it. The existing `packages/common/src/EmissionsFactors.ts` becomes a thin compatibility wrapper over the resolver and is removed in a later phase.
+New workspace package `@cloud-carbon-footprint/grid-intensity` at `packages/grid-intensity`. Depends on `common` only; `aws`, `gcp`, `azure`, `app`, `api` and `cli` depend on it, and `ali` and `on-premise` will when their rows carry provenance. `packages/common/src/EmissionsFactors.ts`, the lookup the adapter replaced, was removed with ADR 0026.
 
 ### 6.1 Interfaces
 
@@ -205,7 +198,7 @@ export interface SourceStatus {
 }
 
 export interface GridIntensitySource {
-  readonly id: string                                  // 'electricitymaps', 'neso', ...
+  readonly id: string                                  // 'neso', 'entsoe', 'static', ...
   readonly licence: LicenceDeclaration                 // default for the source; zones may narrow it
   probe(): Promise<SourceStatus>
   capabilities(zoneId: string): Promise<ZoneCapability | null>
@@ -260,18 +253,18 @@ Implementation notes (Phase 1, recorded as the code landed):
 - `capabilities()` moved from `IntensityResolver` to a separate `CapabilityReporter` interface, implemented with the doctor command, because the list of provider regions to report on comes from the app layer.
 - When every source is coarser than the usage period, the fallback round tries the finest first (a live monthly value beats the static annual one), keeping the configured order for ties.
 - A fetched period with gaps is averaged over the covered part and marked `isEstimated` (tier C); fetched points outside 0 to 1,500 gCO2e/kWh are dropped with a warning. The bounds do not apply to sources with `persist: false` (the static tables): their values are not fetched or stored, and CCF's GCP multi-region factors are sums across data centres (`us` is 3,810).
-- The sixth argument became an options object: `resolver` (tests), `legacyElectricityMapsZones` and `logger`. While `ELECTRICITY_MAPS_TOKEN` is set and no v4 source exists, the adapter first calls the existing v3 `getEmissionsFactors` with the provider's zone map, so deployments with a token keep today's values; the result is labelled `electricitymaps-v3`, granularity `hour`, `isEstimated` unless the usage period is that hour (tier C for daily rows), licence `custom`. The v4 source replaces this path. A failed v3 request (network error, a body that is not JSON, and now also HTTP 5xx and an HTTP 401 whose body says `Invalid auth-token`, which `getElectricityMapsData` used to return as a body without a value; a 401 whose body names the zone, `Request unauthorized for zoneKey=...`, is a valid token without access to that zone or endpoint and still falls back for the row, as verified against the live API on 2026-11-05) throws an `ElectricityMapsRequestError` and aborts the billing-data run, as a failed request did before; Azure's per-subscription catch lets it through instead of skipping the subscription. Falling back instead (as first merged) repeated the failing request for every billing row, and the estimates cache kept the fallback rows for good, because `getMissingDates` never re-estimates a cached day. Recommendations keep upstream's handling (AWS fails the request; GCP reports zero savings per recommendation, except that an idle-address recommendation, costed outside that catch, fails the request; Azure Advisor skips the subscription). Section 6.2's "never abort" applies to the resolver's own sources; the v4 source has to settle how a fallback interacts with the estimates cache before it replaces this path. ADR 0025 covers this for every live source.
-- Usage rows resolve over `usagePeriod(timestamp, grouping)`: from the row's timestamp to the start of the next day, week, month, quarter or year, exclusive (CCF's `getPeriodEndDate` is inclusive, one second short). Recommendations and lookup tables, which have no usage period, resolve over the last full UTC day (`lastFullUtcDay()`); with a token they used the current hour before.
+- The sixth argument is an options object with one field, `resolver`, which tests use in place of the default resolver. Until ADR 0026 it also carried the provider's Electricity Maps zone map and a logger, because the adapter ran the v3 lookup ahead of the sources while `ELECTRICITY_MAPS_TOKEN` was set: the rows that lookup served were labelled `electricitymaps-v3` (tier C for daily usage), and a failed request stopped the billing-data run with an `ElectricityMapsRequestError`, so that the estimates cache kept no fallback rows. All of that is removed. A source that fails now always falls back (section 6.2), and ADR 0025 covers what the cache keeps. Recommendations keep upstream's handling of errors (AWS fails the request; GCP reports zero savings per recommendation, except that an idle-address recommendation, costed outside that catch, fails the request; Azure Advisor skips the subscription), and Azure billing data again leaves out a subscription whose estimate fails, as upstream does.
+- Usage rows resolve over `usagePeriod(timestamp, grouping)`: from the row's timestamp to the start of the next day, week, month, quarter or year, exclusive (CCF's `getPeriodEndDate` is inclusive, one second short). Recommendations and lookup tables, which have no usage period, resolve over the last full UTC day (`lastFullUtcDay()`); upstream's Electricity Maps lookup sampled the current hour for them.
 - The default resolver lives for the process (one CLI run, or the API server's lifetime). The CLI and the API's shutdown handler call `shutdownDefaultResolver()`.
 - `Provenance` and the literal types it uses (`Granularity`, `IntensityBasis`, `EmissionFactorType`, `LicenceId`, `QualityTier`) are defined in `packages/common`, because `ServiceData` carries provenance and `grid-intensity` depends on `common`; `grid-intensity` re-exports them. `Provenance` gained `gCO2ePerKWh`, the intensity applied to the row, which the export (11.1, `IntensityGCO2ePerKWh`) needs per row. A row's `kilowattHours` includes embodied emissions converted at that factor (upstream behaviour), so for every row with a `co2e` value and a non-zero `gCO2ePerKWh`, `co2e` = `kilowattHours` x `gCO2ePerKWh` / 1e6, and neither is an operational-only figure (an AWS row whose instance type CCF cannot size has a NaN `co2e`, upstream). Section 11.1's `EnergyKWh` ("operational energy") and the calibration in section 10 assume otherwise; that needs a decision before those phases. The same decision covers intensities at or near 0: at 0 the embodied kWh are 0 (there is no factor to convert at) while `co2e` still includes the embodied emissions, and just above 0 the converted embodied kWh grow without bound (0.002 t at 0.5 g/kWh is 4,000 kWh). See ADR 0024.
 - `ServiceData.provenance` and `FootprintEstimate.provenance` are optional. AWS, GCP and Azure billing rows carry it; ALI and on-premise rows do not yet (they do not call the resolver).
 - When billing rows accumulate into one service estimate (same day, region, service, account and tags), their provenance is normally identical and kept. If it differs, the merged row takes the lower-tier row's fields except the licence, is marked `isEstimated` (tier C, or D if static), and its intensity is the energy-weighted mean of the two (`mergeProvenance` in `packages/core`). The licence is the more restrictive of the two, so a row with restricted data in it is never labelled open; two different licences at the same level become `open-attribution` or `custom`.
 - A static factor of 0 is treated as missing, as `estimateCo2` does (`factors[region] || factors.Unknown`): the region maps to the table's `Unknown` zone and the provenance reports the Unknown factor, which is the factor applied. GCP's carbon-free-energy table has a 0 for `europe-north2` because Google reports the region as fully carbon-free, so the applied 188.94 gCO2e/kWh (the table's Unknown average) is an upstream overestimate. Correcting it changes estimates and is a model decision for section 9, not part of Phase 1.
-- Unknown-usage rows now resolve grid intensity like every other row. Before, they always applied the static table, so with an Electricity Maps token the known and unknown rows of the same service, region and day used different factors.
+- Unknown-usage rows now resolve grid intensity like every other row. Before, they always applied the static table, so with a value from the Electricity Maps lookup (since removed, ADR 0026) the known and unknown rows of the same service, region and day used different factors.
 
 ### 6.2 Resolution policy
 
-`GRID_INTENSITY_SOURCES` is an ordered list, for example `electricitymaps,neso,entsoe,eia,file,static`. For each (provider, region, period):
+`GRID_INTENSITY_SOURCES` is an ordered list, for example `neso,entsoe,eia,file,static`. For each (provider, region, period):
 
 1. Map the region to a zone in each source, in order. Skip sources with no mapping.
 2. Skip sources whose capability for that zone does not cover the period or cannot deliver a granularity at least as fine as the usage period, unless no finer source exists (then daily or monthly values are time-weighted over the usage period and the tier drops).
@@ -280,12 +273,12 @@ Implementation notes (Phase 1, recorded as the code landed):
 5. Compute the time-weighted mean over the usage period. When the usage period is an hour and the source is hourly, this is the hour's value.
 6. Return with provenance. `static` always succeeds and is tier D.
 
-Failures (network, auth, plan) are logged once per source and zone per run, negative-cached for the capability TTL, and never abort an estimation run.
+Failures (network, authentication, a refused request) are logged once per source and zone per run, negative-cached for the capability TTL, and never abort an estimation run.
 
 Implementation notes (Phase 1):
 
 - Step 2 compares a source's finest granularity with the coarsest granularity whose shortest period fits in the usage period: a week takes daily data, a quarter monthly data, so monthly data is coarser than a week and annual data coarser than a quarter.
-- The capability window limits what is fetched, not what is used (6.3: stored history is what lets a trailing subscription build a longer record). Step 4 reads the store first; only missing periods that lie wholly inside `[earliest, latest]` are fetched, so a source reports both on its own period boundaries. A day or hour that runs past `latest` (today) is served from the source's finest granularity up to `latest`, and its partial coverage marks it estimated; longer periods keep their usual granularity and lose only the incomplete last period.
+- The capability window limits what is fetched, not what is used (6.3: stored history is what lets a source with a short lookback build a longer record). Step 4 reads the store first; only missing periods that lie wholly inside `[earliest, latest]` are fetched, so a source reports both on its own period boundaries. A day or hour that runs past `latest` (today) is served from the source's finest granularity up to `latest`, and its partial coverage marks it estimated; longer periods keep their usual granularity and lose only the incomplete last period.
 - A source that covers only part of the period is a fallback, not the answer: later sources are tried, and the first that covers the whole period at a tier no worse than the best partial result wins (so a full later live source beats it, and the static source does not). With no full result, the partial one with the best tier, then coverage, is used.
 - A failed fetch or capability probe stops that zone's fetches for the TTL, but stored points are still used. After a failed probe the last known capability is kept; in a fresh process with none, the store is read at each granularity, finest first.
 - Fetched points that are not whole UTC periods of the requested granularity, source and zone are dropped with a warning, so points never overlap and coverage cannot read 1 over a gap.
@@ -298,18 +291,18 @@ Implementation notes (Phase 1):
 Every source and every BYO dataset row declares a `LicenceDeclaration`. The tool's behaviour follows from it:
 
 - **Enablement.** Sources whose licence is `commercial`, `non-commercial` or `custom` are inert until the operator lists them in `GRID_INTENSITY_LICENCE_ACKNOWLEDGEMENTS`, which is the operator's statement that they hold the necessary rights (for `non-commercial`, that the deployment is non-commercial). The tool does not verify this; it records it in the run log and the licence manifest.
-- **Retention.** The store applies each source's `retention`: `unlimited` keeps points forever; `per-contract` keeps them for `GRID_INTENSITY_RETENTION_DAYS_<SOURCE>` and purges on each run; `session` never persists. Caching within the retention window is what lets a standard three-month-trailing subscription build a longer history over time; whether a given contract permits that is for the operator to check, which is why retention is configurable per source and defaults to `per-contract` for commercial sources.
+- **Retention.** The store applies each source's `retention`: `unlimited` keeps points forever; `per-contract` keeps them for `GRID_INTENSITY_RETENTION_DAYS_<SOURCE>` and purges on each run; `session` never persists. Caching within the retention window is what lets a source with a short lookback build a longer history over time; whether the terms of a licensed source permit that is for the operator to check, which is why retention is configurable per source and defaults to `per-contract` for commercial sources.
 - **Redistribution.** The export (section 11) writes a `DataLicence` column and a `licence-manifest.json` listing every source and attribution used. Rows whose source is not `redistributable` are excluded unless `--include-licensed-sources` is passed, which writes the operator's acknowledgement into the manifest.
 - **Attribution.** Any output that shows intensity values (API, CLI, export manifest, client footer in a later phase) includes the attribution strings of the sources used. NESO's CC BY 4.0 and EIA's requested acknowledgement are satisfied this way.
 - **Secrets.** Tokens are read through the existing `getEnvVar` (environment or `/run/secrets`). Nothing is written to the repo, the cache or the export.
 
-What this buys: a user with nothing configured gets tier D everywhere and tier A or B in GB, the EU and the US from open sources. A user who buys Electricity Maps adds a token and an acknowledgement and gets tier A wherever their plan covers. A user who buys datasets drops files in a directory. The code is identical in all three cases.
+What this buys: with the default configuration every row is tier D. Listing the open sources in `GRID_INTENSITY_SOURCES`, with the free ENTSO-E token and EIA key of Appendix A, gives tier A or B in GB, the EU and the US. A user who holds a licensed dataset drops files in a directory and acknowledges the licence. The code path is the same in both cases, and neither needs a paid subscription to an aggregator (ADR 0026).
 
 ### 6.4 Quality tiers
 
 | Tier | Meaning |
 |---|---|
-| A | Intensity for the actual hour of usage, from a grid operator or an aggregator, usage at hourly granularity |
+| A | Intensity for the actual hour of usage, from a primary publisher or a loaded dataset, usage at hourly granularity |
 | B | Intensity averaged over the actual usage period (day or longer) from hourly or daily source data |
 | C | Monthly or annual average from a live source, or a tier-A/B source with `isEstimated=true` for the period |
 | D | Static annual constant from the CCF tables (today's behaviour) |
@@ -323,14 +316,14 @@ Tier is per service estimate row; a report can be summarised by the share of kWh
 Implementation notes (Phase 1b, recorded as the code landed in PRs #23, #25 and #26):
 
 - The command is the `grid-intensity-doctor` script of `packages/cli`, run as `yarn workspace @cloud-carbon-footprint/cli grid-intensity-doctor`, because the CLI's commands are `package.json` scripts. There is no `yarn ccf` entry point and no alias in the root `package.json`.
-- The report covers every region in the region tables of AWS, GCP (regions, dual-regions and multi-regions) and Azure, less any provider whose `<PROVIDER>_INCLUDE_ESTIMATES` is `false`. `packages/app` builds the list (`App.getGridIntensityCapabilities()`) and gives it to `createCapabilityReporter` with each provider's static table and zone map, so `grid-intensity` still depends on no provider package. Alibaba Cloud and on-premise are not reported, because their estimates do not use the source layer.
+- The report covers every region in the region tables of AWS, GCP (regions, dual-regions and multi-regions) and Azure, less any provider whose `<PROVIDER>_INCLUDE_ESTIMATES` is `false`. `packages/app` builds the list (`App.getGridIntensityCapabilities()`) and gives it to `createCapabilityReporter` with each provider's static table, so `grid-intensity` still depends on no provider package. Alibaba Cloud and on-premise are not reported, because their estimates do not use the source layer.
 - Tiers are for a day of usage, the finest `GroupBy`, so hourly data shows as tier B and tier A cannot appear before Phase 3. `REPORT_USAGE_GRANULARITY` holds this; Phase 3 needs it per provider, since Azure stays daily.
 - The best tier of a window is the best over the UTC days that overlap it. `SourceCapabilitySummary` gained `coverage`, the share of those days the source can serve in whole or in part, because the tier alone cannot tell a three-month lookback from a three-year one. The doctor prints it as a percentage after the tier when it is below 100. The summary also gained `attribution`, held per source and zone because a zone may narrow the source's licence.
 - Tiers and shares are derived from each zone's capability (granularities, `earliest`, `latest`) by the rules the resolver applies to a day of usage (`granularityFor`, `isWithinWindow`). The report calls no data endpoint and does not read the store, so points stored from before a source's lookback window, which estimates use, are not counted.
 - Licence state is `unavailable` when the source has no zone for the region, answers that it has no capability for the zone, or lists no granularities. A source that needs acknowledgement still shows the tier it would deliver. A zone whose capability probe failed before it ever answered takes the state of the source's own licence, shows no tier, and carries the error.
 - The error is the source's `probe()` answer when it is not reachable or not authenticated, joined with the reason the resolver has stopped the zone's fetches. The resolver now remembers that reason, and keeps each source's probe answer for the capability TTL so that the endpoint does not call a source on every request (`GridIntensityResolver.sourceViews`). The API server reports on the resolver its estimates use, so it shows the failures they have met; the command starts from nothing each time.
-- While `ELECTRICITY_MAPS_TOKEN` is set and no v4 source exists, the report carries `legacyElectricityMaps` (the source id `electricitymaps-v3`, tier C, and a statement in plain words) and each region's `legacyElectricityMapsZoneId`. The v3 lookup is not listed as a source: it is not gated by licence acknowledgements, and the report does not call Electricity Maps, so it cannot tell whether the token has access to a zone. Both fields go when the v4 source replaces the lookup.
-- Verified by running the command on 2026-11-10: with the default configuration it lists 171 regions (39 AWS, 51 GCP, 81 Azure), all tier D from the static source. Lookback, late data, the other licence states and errors are tested with a fake source and have not been seen with a live one.
+- Each region carries `gridZoneId`: its zone in the grid zone registry (section 5.5), or null when it has none. The doctor prints it in a `Grid zone` column. Until ADR 0026 the report instead carried the state of the Electricity Maps v3 lookup, and each region's Electricity Maps zone, while `ELECTRICITY_MAPS_TOKEN` was set.
+- Verified by running the command on 2026-11-10: with the default configuration it lists 171 regions (39 AWS, 51 GCP, 81 Azure), all tier D from the static source. Run again on 2026-11-12 after ADR 0026: the same 171 regions, 134 of them with a grid zone and 37 without. Lookback, late data, the other licence states and errors are tested with a fake source and have not been seen with a live one.
 
 ### 6.6 Persistence
 
@@ -361,7 +354,7 @@ Deliverable enabled by this phase: a time-of-day report (CLI and API) that, per 
 
 - Add `availabilityZone?: string` to `BillingDataRow`, `ServiceData` and the AWS and GCP row types. AWS selects and groups by `line_item_availability_zone` (empty for non-zonal services), GCP by `location.zone`. Azure and ALI leave it null.
 - Grouping by zone is opt-in (`INCLUDE_AVAILABILITY_ZONE=true`) because it multiplies row counts.
-- Intensity is still resolved by region. The provenance `zoneId` is the grid zone, not the cloud zone, and the docs say in one sentence that zone-level emissions are zone-level usage multiplied by regional intensity, because no finer grid data exists.
+- Intensity is still resolved by region. The provenance `zoneId` is the source's zone for the region, an electricity zone and not the cloud availability zone, and the docs say in one sentence that zone-level emissions are zone-level usage multiplied by regional intensity, because no finer grid data exists.
 - PUE: make `getPUE(region)` honour its argument for AWS (it does not today), and add `PUE_OVERRIDES` (JSON, keyed by `provider:region` or `provider:zone`) for operators who have obtained facility PUE from a provider under NDA. Overrides are marked `operator-supplied` in provenance and never committed.
 
 ## 9. Expected consumption rate: the factor table
@@ -435,33 +428,32 @@ Each phase is one or more PRs to `trunk` on the fork, each through the pre-commi
 | Phase | Scope | Size | Depends on | Done when |
 |---|---|---|---|---|
 | 0 | This document, ADR 0022, `CLAUDE.md`; fix the Electricity Maps docs page (granularity claim, variable spelling) | S | none | Merged |
-| 1 | `packages/grid-intensity` with interfaces, static source, Electricity Maps v4 source with capability probe, LOCAL and MONGODB stores, resolver, provenance on `ServiceData` (optional fields), `resolveEmissionsFactors` wired into AWS, GCP and Azure in place of `getEmissionsFactors`, `doctor` command, `GET /grid-intensity/capabilities`. Daily usage gets time-weighted daily intensity (fixes the midnight-sample defect) | L | 0 | Recorded-fixture contract tests pass; doctor shows correct tiers with and without a token; `yarn test` and e2e green; a daily run on a real account shows tier B where a token covers the zone and D elsewhere |
-| 2 | Open sources: NESO, ENTSO-E, EIA with mix-to-intensity conversion and the per-fuel factor table; file source and the Electricity Maps CSV converter; licence acknowledgements, retention and manifest; registry with full coverage tests | L | 1 | A deployment with no paid source shows tier B for all GB, EU and US regions on a daily run; attribution appears in the doctor output and manifest |
+| 1 | `packages/grid-intensity` with interfaces, static source, LOCAL and MONGODB stores, resolver, provenance on `ServiceData` (optional fields), `resolveEmissionsFactors` wired into AWS, GCP and Azure in place of `getEmissionsFactors`, `doctor` command, `GET /grid-intensity/capabilities`. The Electricity Maps v4 source that was in this phase is cancelled, and the v3 lookup with its midnight-sample defect is removed (ADR 0026) | L | 0 | Doctor shows tier D for every region with the default configuration; `yarn test` and e2e green. The daily run on a real account moved to Phase 2 with ADR 0026 |
+| 2 | Open sources: NESO, ENTSO-E, EIA with mix-to-intensity conversion and the per-fuel factor table; file source; licence acknowledgements, retention and manifest; registry with full coverage tests | L | 1 | A deployment with no paid source shows tier B for all GB, EU and US regions on a daily run; a daily run on a real account shows tier B where an open source covers the region and D elsewhere; attribution appears in the doctor output and manifest |
 | 3 | `GroupBy.hour` for AWS and GCP, hourly cache handling, API acceptance, CUR granularity check, time-of-day report | M | 1 | Hourly run on a real AWS account completes; rows are tier A where sources allow; time-of-day report produced; Athena scan cost recorded |
 | 4 | Availability-zone attribution, region-aware AWS PUE, `PUE_OVERRIDES` | M | 3 | Zone rows present for EC2, EBS and RDS; docs state the attribution semantics; provenance marks overrides |
 | 5 | Model version and manifest, `export-factor-table`, published schema and changelog | M | 2 | Factor table generated for all three providers with percentile columns; schema validated in CI |
 | 6 | `packages/provider-reports`: AWS, GCP, Azure ingestion; `CALIBRATION_MODE=report`, then `apply` | L | 3, 5 | Residual table produced for at least one provider on real data; apply mode changes rows only when enabled and stamps `CalibrationVersion` |
 | 7 | `export-dataset` with Parquet and CSV to S3, GCS, Azure Blob and local; licence manifest; Ternary integration docs; scheduled-run example | M | 3 (hourly), 6 optional | A Ternary BYOD integration on the EPEX tenant shows carbon next to cost by region and service |
-| 8 | Publishing: README and microsite pages, methodology page updates (bases, tiers, calibration), CONTRIBUTING for sources, NOTICE and attribution file, upstream PR candidates identified (hook fixes, Electricity Maps v4, hourly grouping), first tagged release | M | 1 to 7 | Fresh clone follows README to a tier-B daily run with no paid data |
+| 8 | Publishing: README and microsite pages, methodology page updates (bases, tiers, calibration), CONTRIBUTING for sources, NOTICE and attribution file, upstream PR candidates identified (hook fixes, hourly grouping), first tagged release | M | 1 to 7 | Fresh clone follows README to a tier-B daily run with no paid data |
 
 Suggested PR granularity inside a phase: interfaces and static source; one source per PR; resolver and wiring; CLI and API; docs. Keep each PR under about 800 changed lines where possible so the hook's test run stays useful.
 
-### Status and order at 2026-11-10
+### Status and order at 2026-11-12
 
 - Phase 0 is done (PR #4).
-- Phase 1 is split in three.
+- Phase 1 is closed.
   - 1a, done (PRs #6 to #9 and #12, hardened in #13 to #15, #17 and #18): the package, the interfaces, the static source, the stores, the resolver, the adapter wired into AWS, GCP and Azure, and provenance on service estimates.
   - 1b, done (PRs #23, #25 and #26): the doctor command and `GET /grid-intensity/capabilities`. Neither needs external credentials. Section 6.5 records how they were built.
-  - 1c, parked: the Electricity Maps v4 source with its recorded-fixture contract tests, and the daily run on a real account. It waits for a token that can call `past-range` (section 14, item 1) and for a real account to run against.
-- Phase 2 may start once 1b is merged. It does not wait for 1c. The open sources need no paid data, and the first of them will be the first live data to go through the resolver, which so far has only been exercised by the static source and a fake one.
+  - 1c, cancelled on 2026-11-12 (ADR 0026): the Electricity Maps v4 source. The v3 lookup the fork inherited was removed at the same time, and with it the midnight-sample defect (section 3.3). The acceptance criterion that waited for 1c, a daily run on a real account that shows tier B, is now part of Phase 2's.
+- Phase 2 is next. The open sources need no paid data, and the first of them will be the first live data to go through the resolver, which so far has only been exercised by the static source and a fake one.
 - The row fields of ADR 0024 and the marker of ADR 0025 are merged before the first live source, so that every row estimated from live data carries them.
-- Phase 1's "done when" is met when 1c closes. Until then the midnight-sample defect of the v3 path (section 3.3) is labelled on each row (tier C, `isEstimated`) but not fixed for deployments that set an Electricity Maps token.
 - Phases 3 to 8 are not started.
 
 ## 13. Testing
 
 - **Unit tests** per package with the existing jest setup and coverage thresholds; the new packages set 90 % statements and branches from the start.
-- **Contract tests** for every external source use recorded fixtures under `src/__tests__/fixtures/` captured in the spike for that source (request shape, success body, auth failure, plan failure, empty range). No test calls the network; `global.fetch` is mocked the way `packages/common/src/__tests__/EmissionsFactors.test.ts` already does.
+- **Contract tests** for every external source use recorded fixtures under `src/__tests__/fixtures/` captured in the spike for that source (request shape, success body, error bodies such as an authentication failure where the source has authentication, empty range). No test calls the network; `global.fetch` is mocked and answers from the recorded fixtures.
 - **Resolver tests** cover fallback order, licence gating, retention purging, time-weighting across granularity mismatches and negative caching.
 - **Data quality checks** run on fetched points before they are stored: 0 ≤ gCO2e/kWh ≤ 1500, contiguous periods, no overlap, and a gap report per zone.
 - **Live smoke** (`GRID_INTENSITY_LIVE_TESTS=true`) runs the doctor against real endpoints; not in CI.
@@ -472,16 +464,17 @@ Suggested PR granularity inside a phase: interfaces and static source; one sourc
 
 Items to confirm against live services before the phase that depends on them. Each becomes a short spike task with its findings recorded in the relevant docs page.
 
-1. Electricity Maps v4: response field names for `past-range` and `zones`; accepted `dataCenterProvider` values; what the free tier returns from `/v4/zones`; terms on caching and retention of fetched data. (Phase 1)
-   Partly answered. On 2026-11-05 the token available to the project got HTTP 401 `Request unauthorized for zoneKey=...` from the v3 `carbon-intensity/past` endpoint for GB, DE, US-CAL-CISO and IN-WE (verified against the live API, PR #14). On 2026-11-10 a web search of Electricity Maps' own pages found the free tier described as covering the latest and 24-hour history endpoints, with `past` and `past-range` on the commercial plan (not checked against the API). The success-path fixtures for the v4 source therefore need a trial or commercial token.
+1. Electricity Maps v4 (response field names for `past-range` and `zones`, the accepted `dataCenterProvider` values, what the free tier returns from `/v4/zones`, the terms on caching fetched data). Closed on 2026-11-12 without an answer: Electricity Maps is not used (ADR 0026). What was learned before that is in the ADR: the project's token was refused by the v3 `carbon-intensity/past` endpoint on 2026-11-05 (PR #14).
 2. ENTSO-E: that document type A75 (actual generation per production type) is on the free re-use list; token request lead time; per-zone resolution (PT15M vs PT60M). (Phase 2)
 3. EIA: exact route (`electricity/rto/fuel-type-data` assumed), facets (`respondent`, `fueltype`), throttling thresholds. (Phase 2)
 4. NESO: regional endpoint path and region ids; whether "actual" regional values exist or only forecasts for regions. (Phase 2)
+   Closed on 2026-11-10 by the spike in `docs/design/spikes/2026-11-neso.md`: regional values are forecasts only, and actual values exist only in the national series. Section 5.1 carries the result.
 5. AWS CUR hourly: whether the EPEX report is hourly; Athena result-set sizes and cost at hourly grouping. (Phase 3)
 6. AWS CCFT Data Export: table name, columns, region availability, both accounting methods. (Phase 6)
 7. Azure Carbon Optimization: accounting method behind the reported figures; stability of the preview API. (Phase 6)
 8. Parquet writer choice for Node without native dependencies, and Ternary's acceptance of its output. (Phase 7)
 9. GCP static grid and carbon-free-energy tables: accounting basis and factor type against Google's published method, to replace the `location-production` and `direct` defaults they are labelled with. (Phase 2)
+   Added on 2026-11-12: Google's page for these figures (https://cloud.google.com/sustainability/region-carbon) says the hourly grid mix and carbon intensity data behind them is from Electricity Maps. The tables are therefore a place where Electricity Maps data still reaches an estimate, at one remove, and the only one found (ADR 0026). Whether to replace them with factors from the sources the AWS and Azure tables use, or from a primary publisher, changes every Google Cloud estimate in the default configuration, so it is decided with the model version in section 9.
 10. MongoDB: the intensity store and the estimates cache against a real server (recovery after a failed first connection, the unique index, a period of 50,000 rows). PRs #13, #15 and #17 record these as checked against mocks only. (Before the first live source)
 11. Open sources: how soon after an hour each one publishes a settled value, and whether it revises values later. This sets how long a result stays provisional (ADR 0025). (Phase 2)
 
@@ -498,7 +491,8 @@ Found during Phase 1 and left for later. Listed here so that it is not lost in p
 
 ## 15. Risks and mitigations
 
-- **Mixed bases in one number.** Flow-traced (Electricity Maps) and production-based (NESO, ENTSO-E, EIA) intensities differ systematically. Mitigation: the basis is a first-class provenance field and the methodology page explains it; summaries can be filtered by basis.
+- **Mixed bases in one number.** Sources differ in accounting basis and factor type, and such figures differ systematically. The NESO spike found NESO consumption-based with direct CO2 factors, and intensity derived from a generation mix is production-based (section 5.3). Mitigation: the basis is a first-class provenance field and the methodology page explains it; summaries can be filtered by basis.
+- **Zones with no open publisher.** Without an aggregator (ADR 0026), a grid zone for which no primary publisher offers hourly data under usable terms stays on the static annual factors, tier D. Mitigation: the doctor shows the tier of every region, the catalogue in 5.1 grows one publisher at a time, and the file source takes data a deployment has obtained itself.
 - **Contract misunderstanding.** A user could cache or redistribute beyond their terms. Mitigation: retention defaults are conservative for commercial sources, the manifest records what was used, and the export refuses non-redistributable rows by default.
 - **Hourly volume.** Local JSON caches will not scale to hourly across many accounts. Mitigation: MongoDB recommended for hourly; row estimates in the docs.
 - **Upstream drift.** The fork will diverge from CCF. Mitigation: keep changes additive, PR the generic pieces upstream (section 12, phase 8), and sync trunk from upstream on a schedule.
@@ -510,13 +504,13 @@ Found during Phase 1 and left for later. Listed here so that it is not lost in p
 - Licence stays Apache-2.0 (upstream's). `NOTICE` gains the data-source attributions. A `DATA_SOURCES.md` lists each source, its terms and the acknowledgement the tool prints.
 - The repository keeps upstream's package names during the programme. Renaming the published packages (or the repository) is a release-time decision for phase 8.
 - Changesets drive versioning as upstream does; the first fork release is a major bump of every package whose public types gained provenance fields.
-- CONTRIBUTING gains a section "Adding a grid intensity source" (implement the interface, add fixtures, add registry entries, declare the licence).
+- CONTRIBUTING gains a section "Adding a grid intensity source" (implement the interface, add fixtures, add the source's table of zones keyed by grid zone, declare the licence).
 
 ## 17. Glossary
 
 - **Location-based**: emissions from the average intensity of the grid where energy is consumed. **Market-based**: emissions after contractual instruments (PPAs, RECs) are applied. **Production-based**: intensity of what a zone generates. **Consumption-based / flow-traced**: intensity of what a zone consumes, including imports.
 - **Lifecycle vs direct factors**: whether upstream emissions of fuels and plant construction are included (lifecycle) or only combustion (direct).
-- **Marginal intensity**: emissions of the next unit of demand (WattTime MOER); a different quantity from average intensity.
+- **Marginal intensity**: emissions of the next unit of demand; a different quantity from average intensity.
 - **CFE**: carbon-free energy percentage; Google's hourly matching metric, reflected in CCF's optional CFE-adjusted factors.
 - **PUE**: power usage effectiveness, facility energy divided by IT energy.
 - **Embodied emissions**: manufacturing emissions of hardware, amortised over its life.
@@ -527,27 +521,24 @@ Found during Phase 1 and left for later. Listed here so that it is not lost in p
 
 | Key | Default | Purpose |
 |---|---|---|
-| `GRID_INTENSITY_SOURCES` | `static` | Ordered source list, e.g. `electricitymaps,neso,entsoe,eia,file,static` |
+| `GRID_INTENSITY_SOURCES` | `static` | Ordered source list, e.g. `neso,entsoe,eia,file,static` |
 | `GRID_INTENSITY_LICENCE_ACKNOWLEDGEMENTS` | empty | Comma-separated source ids the operator asserts they are licensed to use |
 | `GRID_INTENSITY_STORE` | `LOCAL` | `LOCAL` or `MONGODB` |
 | `GRID_INTENSITY_STORE_PATH` | `.ccf/grid-intensity` | LOCAL store directory |
 | `GRID_INTENSITY_RETENTION_DAYS_<SOURCE>` | per source default | Retention for `per-contract` sources |
 | `GRID_INTENSITY_CAPABILITY_TTL_HOURS` | `24` | Lifetime of probe answers, failures, warnings and `session` points |
 | `GRID_INTENSITY_DATASET_DIR` | unset | Directory for BYO dataset files |
-| `GRID_INTENSITY_EMISSION_FACTOR_TYPE` | `lifecycle` | `lifecycle` or `direct` |
-| `GRID_INTENSITY_FLOW_TRACED` | `true` | Electricity Maps `flowTraced` |
-| `ELECTRICITY_MAPS_TOKEN` | existing | unchanged |
+| `GRID_INTENSITY_EMISSION_FACTOR_TYPE` | `lifecycle` | Factor table for intensity derived from a generation mix (5.3): `lifecycle` or `direct` |
 | `ENTSOE_SECURITY_TOKEN` | unset | |
 | `EIA_API_KEY` | unset | |
 | `INCLUDE_AVAILABILITY_ZONE` | `false` | Section 8 |
 | `PUE_OVERRIDES` | unset | JSON map, section 8 |
 | `CALIBRATION_MODE` | `off` | `off`, `report`, `apply` |
 
+`ELECTRICITY_MAPS_TOKEN`, which upstream CCF reads, was removed by ADR 0026. It is ignored, and a warning is logged while it is set, the first time a process resolves grid intensity.
+
 ## Appendix B: references
 
-- Electricity Maps API reference: https://app.electricitymaps.com/api/docs/reference
-- Electricity Maps pricing and custom options: https://help.electricitymaps.com/en/articles/13169258-pricing-and-custom-options
-- Electricity Maps datasets: https://help.electricitymaps.com/en/articles/13169264-datasets-and-csv-downloads
 - NESO Carbon Intensity API: https://carbonintensity.org.uk/ (CC BY 4.0)
 - ENTSO-E Transparency Platform knowledge base: https://transparency.entsoe.eu/content/static_content/Static%20content/knowledge%20base/knowledge%20base.html
 - EIA Open Data API documentation: https://www.eia.gov/opendata/documentation.php and reuse policy: https://www.eia.gov/about/copyrights_reuse.php

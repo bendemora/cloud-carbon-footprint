@@ -52,7 +52,6 @@ import {
   AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
 } from '../domain'
 import { tonnesToGrams } from '@cloud-carbon-footprint/grid-intensity'
-import { AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES } from '../lib/AWSRegions'
 import {} from '../lib/CostAndUsageTypes'
 import { CloudWatchClient } from '@aws-sdk/client-cloudwatch'
 import { GlueClient } from '@aws-sdk/client-glue'
@@ -382,21 +381,16 @@ describe('CostAndUsageReports Service', () => {
     ).getEstimates(startDate, endDate, grouping)
 
     expect(mockResolveCalls.length).toBeGreaterThan(0)
-    for (const [
-      provider,
-      region,
-      start,
-      end,
-      table,
-      options,
-    ] of mockResolveCalls as [
-      string,
-      string,
-      Date,
-      Date,
-      unknown,
-      { legacyElectricityMapsZones: unknown },
-    ][]) {
+    for (const call of mockResolveCalls) {
+      // provider, region, period start, period end and the static table
+      expect(call).toHaveLength(5)
+      const [provider, region, start, end, table] = call as [
+        string,
+        string,
+        Date,
+        Date,
+        unknown,
+      ]
       expect(provider).toBe('AWS')
       expect(region).toEqual(expect.any(String))
       // a day grouping: one whole UTC day, exclusive end
@@ -405,9 +399,6 @@ describe('CostAndUsageReports Service', () => {
       expect(table).toEqual({
         factors: AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
       })
-      expect(options.legacyElectricityMapsZones).toBe(
-        AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-      )
     }
   })
 
@@ -460,7 +451,7 @@ describe('CostAndUsageReports Service', () => {
     it('applies the resolved intensity and its provenance to unknown-usage rows as well', async () => {
       const liveTonnesPerKWh = 0.0001
       const liveProvenance = {
-        sourceId: 'electricitymaps-v3',
+        sourceId: 'live-source',
         zoneId: 'US-TEST',
         granularity: 'hour',
         basis: 'location-consumption',

@@ -3,7 +3,8 @@
  */
 
 import fs from 'fs'
-import getConfig from '../Config'
+import getConfig, { CCFConfig } from '../Config'
+import configLoader, { setConfig } from '../ConfigLoader'
 import { AccountDetails } from '../Types'
 
 describe('Config', () => {
@@ -138,26 +139,19 @@ describe('Config', () => {
     })
 
     it('reads comma-separated source and acknowledgement lists, trimming blanks', () => {
-      withEnvironment(
-        'GRID_INTENSITY_SOURCES',
-        ' electricitymaps, ,static ',
-        () => {
-          withEnvironment(
-            'GRID_INTENSITY_LICENCE_ACKNOWLEDGEMENTS',
-            'electricitymaps',
-            () => {
-              const config = getConfig()
-              expect(config.GRID_INTENSITY.SOURCES).toEqual([
-                'electricitymaps',
-                'static',
-              ])
-              expect(config.GRID_INTENSITY.LICENCE_ACKNOWLEDGEMENTS).toEqual([
-                'electricitymaps',
-              ])
-            },
-          )
-        },
-      )
+      withEnvironment('GRID_INTENSITY_SOURCES', ' neso, ,static ', () => {
+        withEnvironment(
+          'GRID_INTENSITY_LICENCE_ACKNOWLEDGEMENTS',
+          'neso',
+          () => {
+            const config = getConfig()
+            expect(config.GRID_INTENSITY.SOURCES).toEqual(['neso', 'static'])
+            expect(config.GRID_INTENSITY.LICENCE_ACKNOWLEDGEMENTS).toEqual([
+              'neso',
+            ])
+          },
+        )
+      })
     })
 
     it('reads the store mode, in any case, and the store path', () => {
@@ -184,6 +178,95 @@ describe('Config', () => {
         })
       },
     )
+  })
+
+  describe('removed settings', () => {
+    it('has no warning when none of them is set', () => {
+      withEnvironment('ELECTRICITY_MAPS_TOKEN', '', () => {
+        expect(getConfig().REMOVED_SETTING_WARNINGS).toEqual([])
+      })
+    })
+
+    it('warns that ELECTRICITY_MAPS_TOKEN is no longer read and names what is used instead, without the value', () => {
+      withEnvironment('ELECTRICITY_MAPS_TOKEN', 'a-token', () => {
+        const warnings = getConfig().REMOVED_SETTING_WARNINGS
+        expect(warnings).toHaveLength(1)
+        expect(warnings[0]).toContain(
+          'ELECTRICITY_MAPS_TOKEN is set but is no longer read.',
+        )
+        expect(warnings[0]).toContain('GRID_INTENSITY_SOURCES')
+        expect(warnings[0]).not.toContain('a-token')
+      })
+    })
+
+    describe('in a configuration object given to setConfig', () => {
+      // A deployment that builds its own configuration, in JavaScript or
+      // loosely typed, can still carry the property the type no longer has.
+      const withToken = (config: CCFConfig, token: unknown): CCFConfig =>
+        ({ ...config, ELECTRICITY_MAPS_TOKEN: token }) as CCFConfig
+      const base = (): CCFConfig => ({
+        ...getConfig(),
+        REMOVED_SETTING_WARNINGS: [],
+      })
+
+      afterEach(() => {
+        setConfig()
+      })
+
+      it('adds the warning, without the value, and leaves the given object alone', () => {
+        const given = withToken(base(), 'a-token')
+        const stored = setConfig(given)
+        expect(stored).not.toBe(given)
+        expect(given.REMOVED_SETTING_WARNINGS).toEqual([])
+        expect(configLoader()).toBe(stored)
+        expect(stored.REMOVED_SETTING_WARNINGS).toHaveLength(1)
+        expect(stored.REMOVED_SETTING_WARNINGS[0]).toContain(
+          'ELECTRICITY_MAPS_TOKEN is set but is no longer read.',
+        )
+        expect(stored.REMOVED_SETTING_WARNINGS[0]).not.toContain('a-token')
+      })
+
+      it('keeps the warnings the object already has, each once', () => {
+        withEnvironment(
+          'ELECTRICITY_MAPS_TOKEN',
+          'from-the-environment',
+          () => {
+            const fromEnvironment = getConfig()
+            const stored = setConfig(
+              withToken(
+                {
+                  ...fromEnvironment,
+                  REMOVED_SETTING_WARNINGS: [
+                    'OLD_SETTING is set but is no longer read.',
+                    ...fromEnvironment.REMOVED_SETTING_WARNINGS,
+                  ],
+                },
+                'a-token',
+              ),
+            )
+            expect(stored.REMOVED_SETTING_WARNINGS).toHaveLength(2)
+            expect(stored.REMOVED_SETTING_WARNINGS[0]).toBe(
+              'OLD_SETTING is set but is no longer read.',
+            )
+          },
+        )
+      })
+
+      it.each([
+        ['has no such property', undefined],
+        ['has the property with no value', ''],
+      ])('stores the object itself when it %s', (_case, token) => {
+        const given = token === undefined ? base() : withToken(base(), token)
+        expect(setConfig(given)).toBe(given)
+        expect(configLoader().REMOVED_SETTING_WARNINGS).toEqual([])
+      })
+
+      it('gives the warning for a configuration that has no list of warnings', () => {
+        const { REMOVED_SETTING_WARNINGS: _none, ...withoutList } = base()
+        const stored = setConfig(withToken(withoutList as CCFConfig, 'a-token'))
+        expect(stored.REMOVED_SETTING_WARNINGS).toHaveLength(1)
+      })
+    })
   })
 
   describe('INCLUDE_ESTIMATES', () => {
