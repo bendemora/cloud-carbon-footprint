@@ -13,7 +13,6 @@ import {
 } from '@cloud-carbon-footprint/core'
 import {
   containsAny,
-  Logger,
   RecommendationResult,
 } from '@cloud-carbon-footprint/common'
 import {
@@ -33,17 +32,13 @@ import {
   AZURE_CLOUD_CONSTANTS,
   AZURE_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
 } from '../domain'
-import { AZURE_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES } from './AzureRegions'
 
 export default class AdvisorRecommendations implements ICloudRecommendationsService {
-  private readonly recommendationsLogger: Logger
   constructor(
     private readonly computeEstimator: ComputeEstimator,
     private readonly memoryEstimator: MemoryEstimator,
     private readonly advisorManagementClient: AdvisorManagementClient,
-  ) {
-    this.recommendationsLogger = new Logger('AzureRecommendations')
-  }
+  ) {}
 
   async pageThroughRows(): Promise<ResourceRecommendationBase[]> {
     const recommendationsList = []
@@ -70,10 +65,7 @@ export default class AdvisorRecommendations implements ICloudRecommendationsServ
           new RightsizingCurrentRecommendation(recommendation)
 
         const [currentComputeFootprint, currentMemoryFootprint] =
-          await this.getFootprintEstimates(
-            rightsizingCurrentRecommendation,
-            this.recommendationsLogger,
-          )
+          await this.getFootprintEstimates(rightsizingCurrentRecommendation)
 
         let kilowattHourSavings = currentComputeFootprint.kilowattHours
         let co2eSavings = currentComputeFootprint.co2e
@@ -97,10 +89,7 @@ export default class AdvisorRecommendations implements ICloudRecommendationsServ
             new RightsizingTargetRecommendation(recommendation)
 
           const [targetComputeFootprint, targetMemoryFootprint] =
-            await this.getFootprintEstimates(
-              rightsizingTargetRecommendation,
-              this.recommendationsLogger,
-            )
+            await this.getFootprintEstimates(rightsizingTargetRecommendation)
 
           kilowattHourSavings -= targetComputeFootprint.kilowattHours
           co2eSavings -= targetComputeFootprint.co2e
@@ -158,7 +147,6 @@ export default class AdvisorRecommendations implements ICloudRecommendationsServ
 
   private async getFootprintEstimates(
     rightsizingRecommendation: RightsizingRecommendation,
-    logger: Logger,
   ) {
     const period = lastFullUtcDay()
     const { factors: emissionsFactors } = await resolveEmissionsFactors(
@@ -167,11 +155,6 @@ export default class AdvisorRecommendations implements ICloudRecommendationsServ
       period.start,
       period.end,
       { factors: AZURE_EMISSIONS_FACTORS_METRIC_TON_PER_KWH },
-      {
-        legacyElectricityMapsZones:
-          AZURE_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-        logger: logger,
-      },
     )
 
     const computeFootprint = this.getComputeFootprint(

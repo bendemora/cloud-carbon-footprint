@@ -4,13 +4,9 @@
  */
 
 import { setConfig } from '@cloud-carbon-footprint/common'
+import { GRID_ZONES } from '@cloud-carbon-footprint/grid-intensity'
 import { getGCPEmissionsFactors } from '../domain'
-import {
-  GCP_DUAL_REGIONS,
-  GCP_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-  GCP_MULTI_REGIONS,
-  GCP_REGIONS,
-} from '../lib'
+import { GCP_DUAL_REGIONS, GCP_MULTI_REGIONS, GCP_REGIONS } from '../lib'
 
 // The regions the grid intensity capability report lists (packages/app).
 describe('GCP region tables', () => {
@@ -34,10 +30,10 @@ describe('GCP region tables', () => {
     expect(regions.filter((region) => !(region in factors))).toEqual([])
   })
 
-  it('name only regions of the region tables in the factor table and the Electricity Maps zone map', () => {
+  it('name only regions of the region tables in the factor table and the grid zone registry', () => {
     const unknown = [
       ...namedIn(getGCPEmissionsFactors()),
-      ...namedIn(GCP_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES),
+      ...namedIn(GRID_ZONES.GCP),
     ].filter((region) => !regions.includes(region))
     expect(unknown).toEqual([])
   })

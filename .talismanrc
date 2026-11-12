@@ -110,13 +110,13 @@ fileignoreconfig:
 - filename: docker/nginx.conf
   checksum: a4632d785a11f199217d4229a40eba5a38180d9945d96799dc9b5efc6a3bc06e
 - filename: docs/design/2026-11-localised-time-resolved-carbon-estimation.md
-  checksum: 782c06f51dd5c6b9521ff2754ce14942d6cc50b5ffd36566250abecbb87248db
+  checksum: 9399de5c314273d0e2c5e9e2a5cc5db697e6d2971113a5cb003cf01d890f9a09
 - filename: microsite/blog/2023-08-23-ccf-on-vm.md
   checksum: 84e94d40daf06c50f7b0e26d8d73a300d967279a87612e991e417530bfb8774c
 - filename: microsite/docs/ClassifyingUsageTypes.md
   checksum: f4b232851337efec90c4a88271cdf4cde2a9d732f0f69824223f1dcf7c6b8aaa
 - filename: microsite/docs/ConfigurationOptions/EmissionsFactors.md
-  checksum: ec5b7b82383e7acd5e12ac05d9abb21d3eb1c2f0e9e0e7f12b952a171f70334b
+  checksum: ac11d589ab47ea6c521601f8dfd81f8c86e2b57f58304e1d5e33d4267db686c7
 - filename: microsite/docs/ConfigurationOptions/PerformanceConsiderations.md
   checksum: f98b207c28550e3f44b27a47ebb0a5553c28318edaaf2f490ba94856a082badb
 - filename: microsite/docs/CreatingALookupTable.md
@@ -140,7 +140,7 @@ fileignoreconfig:
 - filename: packages/ali/src/lib/AliCalculateRow.ts
   checksum: 77997e1e88c3fe9bbafbda63d4c1c9b83df439417664cf0d080488b01c8c0c51
 - filename: packages/api/.env.template
-  checksum: 024d92688cbbca7a345f9c9ee53e86d377ec6df92ddb746dce90c57b2a5c988f
+  checksum: 59a9ce0c4f9348517015b56cb1b06a181ea7b9781e4b277e15481c3e3d201e43
 - filename: packages/api/CHANGELOG.md
   checksum: 70538ae254f51f772d64e42ddb9f2c6393fc49969ea0be0cc5c91a6447204032
 - filename: packages/api/create_docker_secrets.sh
@@ -226,7 +226,7 @@ fileignoreconfig:
 - filename: packages/azure/src/lib/ConsumptionManagement.ts
   checksum: 42fc6ed4df06fb61f5077f3192d8b8aa8162016621da79f369247fac612afbd6
 - filename: packages/cli/.env.template
-  checksum: e3d3b374e2680bc5f346eb243c96ec94ca7e08e449a1cbc5e6cf9561490d7082
+  checksum: 6cc1ecc01507527e039118e7eea5aa73827c3564f2309a9cf1093ef50df8c58a
 - filename: packages/cli/CHANGELOG.md
   checksum: 21834ba3691c0d05ea8d60ccaae74695a0e7a1f73c762d2692a5e2e2bb7c5c93
 - filename: packages/cli/src/CreateLookupTable/createAzureInput.ts
@@ -345,10 +345,6 @@ fileignoreconfig:
   checksum: fd9afa539a5991cb21416293ae9d17a57005b5bcacdd148fe9f4ce0fd3de145e
 - filename: packages/common/src/Config.ts
   checksum: 8cde1d40a5a56e3f1454534817d254a7b61baf2d28e185bf0c5093d8320c8b85
-- filename: packages/common/src/EmissionsFactors.ts
-  checksum: e34b4cc1bd5840fe11a94e5fe4ca20eeee6aebd999815385f9499c1473898537
-- filename: packages/common/src/__tests__/EmissionsFactors.test.ts
-  checksum: c7942c351d96d9f2c921452ca69718ef551ceec998207959f00d1e8332a774fa
 - filename: packages/core/package.json
   checksum: c0f3b35fe6ca5f0bb14a34ccda0ed917ed97c03b116190210f4da82628891706
 - filename: packages/core/src/CloudConstantsTypes.ts
@@ -385,9 +381,9 @@ fileignoreconfig:
   checksum: a64d71c2fc2e45bccba7b7bdb9bcac70825eb78882799e789c130b60cae4558e
 - filename: packages/create-app/templates/default-app/.yarn/releases/yarn-4.12.0.cjs
 - filename: packages/create-app/templates/default-app/packages/api/.env.template
-  checksum: 6a3a9348d74dd6df5978cc0aa6a2fa0c5b51cb62484735614eb5338ccdb6458e
+  checksum: 34b6a48674d45a6263711217c77307458227bd0c8d002081a90c9dfb8f69bb31
 - filename: packages/create-app/templates/default-app/packages/cli/.env.template
-  checksum: 5445657c548050959e00d0b6ea0c05551679bf9b4f2bc3859d6f4fbb1501de37
+  checksum: ccf5f1064b6ebfef0109313a0752ab006d7744eb9b1381bd90792479ba11024c
 - filename: packages/create-app/templates/default-app/packages/cli/src/GuidedInstall/aws.ts
   checksum: 402853f10d9ee56006cea9b63d6ec8d34d6eed506addf89d048d3072069d9f7b
 - filename: packages/create-app/templates/default-app/packages/cli/src/GuidedInstall/azure.ts
@@ -506,6 +502,12 @@ fileignoreconfig:
   checksum: ba8f026843b80a390e7d4e9d570e35628ce72f2f9078ba96a9aec576f2bb7910
 - filename: packages/grid-intensity/src/__tests__/createIntensityStore.test.ts
   checksum: 313e399f02ec16d57fd0d30984a705fed08a3c9f0d7cd8f7687c0eebe065afb4
+- filename: docs/design/spikes/2026-11-neso.md
+  checksum: 6cc2382f088431f6993aab7e127d63b5a41d8a5a0a6f3def4fdcc4be0496cb81
+- filename: .adr/0026-grid_intensity_from_primary_publishers.md
+  checksum: 5367290b507a0f461a5edea530d47911a154bda13fd8c1506c285af0572d7300
+- filename: docs/design/research/2026-11-primary-publishers.md
+  checksum: 2f697438b456975f8afc0011ecc19424aa8bfc73b32d33a9dc5f4c6ce74c3f3d
 scopeconfig:
 - scope: node
 version: "1.0"

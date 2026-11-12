@@ -5,6 +5,7 @@
 import { BigQuery } from '@google-cloud/bigquery'
 import {
   EstimationResult,
+  ServiceData,
   GroupBy,
   Logger,
   LookupTableOutput,
@@ -20,7 +21,6 @@ import {
 } from '@cloud-carbon-footprint/core'
 
 import { GCP_CLOUD_CONSTANTS, getGCPEmissionsFactors } from '../domain'
-import { GCP_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES } from '../lib/GCPRegions'
 import { tonnesToGrams } from '@cloud-carbon-footprint/grid-intensity'
 import BillingExportTable, { buildTagQuery } from '../lib/BillingExportTable'
 import {
@@ -66,19 +66,41 @@ jest.mock('@cloud-carbon-footprint/grid-intensity', () => {
 })
 
 /**
- * The results without provenance, for comparing with expectations written
- * before provenance existed. Fails if any service estimate lacks it, so
- * stripping cannot hide a missing field.
+ * ADR 0024: a row with a co2e value says how much of its energy is
+ * electricity and how much of its emissions is embodied, and its co2e is the
+ * electricity at the row's grid intensity plus the embodied emissions.
+ */
+const expectEnergySplit = (estimate: ServiceData) => {
+  const { operationalKilowattHours, embodiedCo2e, co2e, provenance } = estimate
+  expect(operationalKilowattHours).toBeGreaterThanOrEqual(0)
+  expect(embodiedCo2e).toBeGreaterThanOrEqual(-1e-15)
+  const rebuilt =
+    (operationalKilowattHours * provenance.gCO2ePerKWh) / 1e6 + embodiedCo2e
+  expect(Math.abs(rebuilt - co2e)).toBeLessThanOrEqual(
+    1e-9 * Math.abs(co2e) + 1e-18,
+  )
+}
+
+/**
+ * The results without provenance and without the two fields of ADR 0024,
+ * for comparing with expectations written before those existed. Fails if any
+ * service estimate lacks provenance, or does not split as ADR 0024 says, so
+ * stripping cannot hide a missing or wrong field.
  */
 const withoutProvenance = (results: EstimationResult[]) =>
   results.map((result) => ({
     ...result,
-    serviceEstimates: result.serviceEstimates.map(
-      ({ provenance, ...estimate }) => {
-        expect(provenance?.qualityTier).toEqual(expect.any(String))
-        return estimate
-      },
-    ),
+    serviceEstimates: result.serviceEstimates.map((serviceEstimate) => {
+      const {
+        provenance,
+        operationalKilowattHours: _operationalKilowattHours,
+        embodiedCo2e: _embodiedCo2e,
+        ...estimate
+      } = serviceEstimate
+      expect(provenance?.qualityTier).toEqual(expect.any(String))
+      expectEnergySplit(serviceEstimate)
+      return estimate
+    }),
   }))
 
 const mockJob = { getQueryResults: jest.fn() }
@@ -186,30 +208,150 @@ describe('GCP BillingExportTable Service', () => {
     ).getEstimates(startDate, endDate, grouping)
 
     expect(mockResolveCalls.length).toBeGreaterThan(0)
-    for (const [
-      provider,
-      region,
-      start,
-      end,
-      table,
-      options,
-    ] of mockResolveCalls as [
-      string,
-      string,
-      Date,
-      Date,
-      unknown,
-      { legacyElectricityMapsZones: unknown },
-    ][]) {
+    for (const call of mockResolveCalls) {
+      // provider, region, period start, period end and the static table
+      expect(call).toHaveLength(5)
+      const [provider, region, start, end, table] = call as [
+        string,
+        string,
+        Date,
+        Date,
+        unknown,
+      ]
       expect(provider).toBe('GCP')
       expect(region).toEqual(expect.any(String))
       // a day grouping: one whole day from the row's timestamp, exclusive end
       expect(end.getTime() - start.getTime()).toBe(24 * 60 * 60 * 1000)
       expect(table).toEqual({ factors: getGCPEmissionsFactors })
-      expect(options.legacyElectricityMapsZones).toBe(
-        GCP_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-      )
     }
+  })
+
+  describe('operational energy and embodied emissions (ADR 0024)', () => {
+    const liveProvenance = (gCO2ePerKWh: number) => ({
+      sourceId: 'live-source',
+      zoneId: 'TEST',
+      granularity: 'hour',
+      basis: 'location-consumption',
+      factorType: 'lifecycle',
+      isEstimated: false,
+      licenceId: 'public-domain',
+      qualityTier: 'B',
+      gCO2ePerKWh,
+      modelVersion: 'unversioned',
+    })
+
+    /** Every service estimate of a fresh run over the fixture. */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const estimatesFor = async (fixture: any[][]) => {
+      GCP_CLOUD_CONSTANTS.KILOWATT_HOURS_BY_SERVICE_AND_USAGE_UNIT = {
+        total: {},
+      }
+      // getEstimates replaces each row's tags in place and other tests use
+      // these fixtures too; the rows have no tags of their own.
+      mockJob.getQueryResults.mockResolvedValue(
+        structuredClone(fixture).map((page) =>
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          page.map(({ tags, ...row }) => row),
+        ),
+      )
+      const results = await new BillingExportTable(
+        new ComputeEstimator(),
+        new StorageEstimator(GCP_CLOUD_CONSTANTS.SSDCOEFFICIENT),
+        new StorageEstimator(GCP_CLOUD_CONSTANTS.HDDCOEFFICIENT),
+        new NetworkingEstimator(GCP_CLOUD_CONSTANTS.NETWORKING_COEFFICIENT),
+        new MemoryEstimator(GCP_CLOUD_CONSTANTS.MEMORY_COEFFICIENT),
+        new UnknownEstimator(GCP_CLOUD_CONSTANTS.ESTIMATE_UNKNOWN_USAGE_BY),
+        new EmbodiedEmissionsEstimator(
+          GCP_CLOUD_CONSTANTS.SERVER_EXPECTED_LIFESPAN,
+        ),
+        new BigQuery(),
+      ).getEstimates(startDate, endDate, grouping)
+      return results.flatMap((result) => result.serviceEstimates)
+    }
+
+    afterEach(() => {
+      mockResolveOverride = undefined
+    })
+
+    it('separates the embodied emissions of compute rows from their electricity, and gives other rows none', async () => {
+      const estimates = await estimatesFor(
+        mockQueryComputeWithDifferentMachineTypesForEmbodiedEmissions,
+      )
+      estimates.forEach(expectEnergySplit)
+      const withEmbodied = estimates.filter(
+        (estimate) => estimate.embodiedCo2e > 0,
+      )
+      expect(withEmbodied.length).toBeGreaterThan(0)
+      for (const estimate of withEmbodied)
+        expect(estimate.operationalKilowattHours).toBeLessThan(
+          estimate.kilowattHours,
+        )
+
+      const others = await estimatesFor(mockQueryResultsAppEngineSSDStorage)
+      others.forEach(expectEnergySplit)
+      // Every row of this fixture is storage.
+      const storageOnly = others
+      expect(storageOnly.length).toBeGreaterThan(0)
+      for (const estimate of storageOnly) {
+        expect(estimate.embodiedCo2e).toBe(0)
+        expect(estimate.operationalKilowattHours).toBe(estimate.kilowattHours)
+      }
+    })
+
+    it.each([
+      [
+        'with embodied emissions',
+        mockQueryComputeWithDifferentMachineTypesForEmbodiedEmissions,
+      ],
+      ['with unknown usage', mockQueryResultsUnknownAndCloudSQLCompute],
+    ])(
+      'reports the same electricity and embodied emissions at 400 and at 50 gCO2e/kWh when every row is resolved at the same intensity, for usage %s',
+      async (_name, fixture) => {
+        mockResolveOverride = {
+          factors: { Unknown: 0.0004 },
+          provenance: liveProvenance(400),
+        }
+        const dirtyGrid = await estimatesFor(fixture)
+        mockResolveOverride = {
+          factors: { Unknown: 0.00005 },
+          provenance: liveProvenance(50),
+        }
+        const cleanGrid = await estimatesFor(fixture)
+
+        expect(cleanGrid.length).toBe(dirtyGrid.length)
+        expect(cleanGrid.length).toBeGreaterThan(0)
+        cleanGrid.forEach((clean, index) => {
+          const dirty = dirtyGrid[index]
+          expectEnergySplit(clean)
+          expectEnergySplit(dirty)
+          expect(clean.operationalKilowattHours).toBeCloseTo(
+            dirty.operationalKilowattHours,
+            9,
+          )
+          expect(clean.embodiedCo2e).toBeCloseTo(dirty.embodiedCo2e, 12)
+          // The legacy total grows on the cleaner grid wherever there are
+          // embodied emissions: they become more kilowatt hours.
+          if (clean.embodiedCo2e > 1e-12)
+            expect(clean.kilowattHours).toBeGreaterThan(dirty.kilowattHours)
+        })
+      },
+    )
+
+    it('holds at an intensity of 0, where co2e is the embodied emissions alone', async () => {
+      mockResolveOverride = {
+        factors: { Unknown: 0 },
+        provenance: liveProvenance(0),
+      }
+      const estimates = await estimatesFor(
+        mockQueryComputeWithDifferentMachineTypesForEmbodiedEmissions,
+      )
+      estimates.forEach(expectEnergySplit)
+      expect(estimates.some((estimate) => estimate.embodiedCo2e > 0)).toBe(true)
+      for (const estimate of estimates) {
+        expect(estimate.co2e).toBe(estimate.embodiedCo2e)
+        expect(estimate.operationalKilowattHours).toBe(estimate.kilowattHours)
+      }
+    })
   })
 
   describe('provenance', () => {
@@ -269,7 +411,7 @@ describe('GCP BillingExportTable Service', () => {
     it('applies the resolved intensity and its provenance to unknown-usage rows as well', async () => {
       const liveTonnesPerKWh = 0.0001
       const liveProvenance = {
-        sourceId: 'electricitymaps-v3',
+        sourceId: 'live-source',
         zoneId: 'TEST',
         granularity: 'hour',
         basis: 'location-consumption',

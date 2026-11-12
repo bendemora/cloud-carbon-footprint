@@ -6,19 +6,16 @@
 import { configLoader } from '@cloud-carbon-footprint/common'
 import {
   AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
-  AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
   AWS_REGIONS,
 } from '@cloud-carbon-footprint/aws'
 import {
   GCP_DUAL_REGIONS,
-  GCP_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
   GCP_MULTI_REGIONS,
   GCP_REGIONS,
   getGCPEmissionsFactors,
 } from '@cloud-carbon-footprint/gcp'
 import {
   AZURE_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
-  AZURE_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
   AZURE_REGIONS,
 } from '@cloud-carbon-footprint/azure'
 import {
@@ -26,6 +23,30 @@ import {
   createCapabilityReporter,
   ProviderRegion,
 } from '@cloud-carbon-footprint/grid-intensity'
+import { CachedPeriodCount, countCachedPeriods } from './EstimatesCache'
+
+export interface GridIntensityCapabilitiesOptions {
+  /**
+   * Also report how many periods the estimates cache holds. Off by default,
+   * because counting reads the whole cache and the report is otherwise cheap.
+   */
+  cachedEstimates?: boolean
+}
+
+/**
+ * The capability report of the grid intensity layer, with what only the app
+ * layer knows next to it: the estimates cache. The grid-intensity package
+ * knows nothing of that cache, so the field is added here.
+ */
+export interface GridIntensityCapabilities extends CapabilityReport {
+  /**
+   * For each grouping the estimates cache holds periods of, how many it
+   * holds and how many of them hold provisional rows, which the
+   * refresh-estimates command would estimate again (ADR 0025). Present only
+   * when the cachedEstimates option asks for it.
+   */
+  cachedEstimates?: CachedPeriodCount[]
+}
 
 /**
  * Every region in the region tables of AWS, GCP and Azure, the providers
@@ -54,24 +75,27 @@ const providerRegions = (): ProviderRegion[] => {
 }
 
 /**
- * What each configured grid intensity source can deliver for each provider
- * region (design section 6.5): the report behind the doctor command and
- * GET /api/grid-intensity/capabilities.
+ * The grid zone of each provider region and what each configured grid
+ * intensity source can deliver for it (design section 6.5): the report
+ * behind the doctor command and GET /api/grid-intensity/capabilities.
  *
- * The static tables and zone maps are the ones the provider packages give
+ * The static tables are the ones the provider packages give
  * resolveEmissionsFactors, so the report describes what estimates would use.
+ *
+ * With the cachedEstimates option the report also says how many periods the
+ * estimates cache holds and how many of them are provisional (ADR 0025).
  */
-export const getGridIntensityCapabilities = (): Promise<CapabilityReport> =>
-  createCapabilityReporter({
+export const getGridIntensityCapabilities = async (
+  options: GridIntensityCapabilitiesOptions = {},
+): Promise<GridIntensityCapabilities> => {
+  const report = await createCapabilityReporter({
     regions: providerRegions(),
     staticTables: {
       AWS: { factors: AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH },
       GCP: { factors: getGCPEmissionsFactors },
       AZURE: { factors: AZURE_EMISSIONS_FACTORS_METRIC_TON_PER_KWH },
     },
-    legacyElectricityMapsZones: {
-      AWS: AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-      GCP: GCP_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-      AZURE: AZURE_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-    },
   }).capabilities()
+  if (!options.cachedEstimates) return report
+  return { ...report, cachedEstimates: await countCachedPeriods() }
+}
