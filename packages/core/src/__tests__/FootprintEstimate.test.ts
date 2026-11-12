@@ -18,7 +18,7 @@ import FootprintEstimate, {
 } from '../FootprintEstimate'
 import BillingDataRow from '../BillingDataRow'
 import { COMPUTE_PROCESSOR_TYPES } from '../compute'
-import { GroupBy } from '@cloud-carbon-footprint/common'
+import { GroupBy, Provenance } from '@cloud-carbon-footprint/common'
 import each from 'jest-each'
 import {
   accumulateKilowattHoursPerCostData,
@@ -579,6 +579,13 @@ describe('FootprintEstimate', () => {
         })
         expect(totals.total.Hrs).toEqual(totals.AmazonEC2.Hrs)
       })
+
+      it('records no operational sum for an energy that is not a number', () => {
+        const totals: KilowattHoursByServiceAndUsageUnit = { total: {} }
+        accumulate(totals, NaN)
+        accumulate(totals, NaN)
+        expect(totals.total.Hrs).toEqual({ cost: 10, kilowattHours: NaN })
+      })
     })
 
     describe('appendOrAccumulateEstimatesByDay', () => {
@@ -639,6 +646,85 @@ describe('FootprintEstimate', () => {
           expect(estimate).not.toHaveProperty('operationalKilowattHours')
           expect(estimate).not.toHaveProperty('embodiedCo2e')
         }
+      })
+
+      const provenanceAt = (gCO2ePerKWh: number): Provenance => ({
+        sourceId: 'live-source',
+        zoneId: 'TEST',
+        granularity: 'hour',
+        basis: 'location-consumption',
+        factorType: 'lifecycle',
+        isEstimated: false,
+        licenceId: 'public-domain',
+        qualityTier: 'B',
+        gCO2ePerKWh,
+        modelVersion: 'unversioned',
+      })
+      /** A row as a provider builds it at an intensity of g gCO2e/kWh. */
+      const rowAt = (
+        g: number,
+        operationalKilowattHours: number,
+        embodiedCo2e: number,
+      ) => ({
+        timestamp: dayOne,
+        kilowattHours: operationalKilowattHours + (embodiedCo2e * 1e6) / g,
+        co2e: (operationalKilowattHours * g) / 1e6 + embodiedCo2e,
+        operationalKilowattHours,
+        embodiedCo2e,
+        provenance: provenanceAt(g),
+      })
+
+      it('blends the intensities of parts that differ in provenance by their electricity, so the identity holds on the merged row', () => {
+        const estimate = merged([rowAt(50, 30, 0.002), rowAt(400, 10, 0.001)])
+        // (50 x 30 + 400 x 10) / 40. Weighted by the legacy totals, which
+        // hold 40 and 2.5 kWh of embodied emissions, it would be 109.7.
+        expect(estimate.provenance.gCO2ePerKWh).toBeCloseTo(137.5, 10)
+        expect(estimate.provenance.isEstimated).toBe(true)
+        expect(estimate.operationalKilowattHours).toBe(40)
+        expect(
+          (estimate.operationalKilowattHours *
+            estimate.provenance.gCO2ePerKWh) /
+            1e6 +
+            estimate.embodiedCo2e,
+        ).toBeCloseTo(estimate.co2e, 15)
+      })
+
+      it('keeps the identity over three parts, whatever their order', () => {
+        const parts = [
+          rowAt(50, 30, 0.002),
+          rowAt(400, 10, 0.001),
+          rowAt(5, 60, 0),
+        ]
+        for (const order of [
+          [0, 1, 2],
+          [2, 1, 0],
+          [1, 2, 0],
+        ]) {
+          const estimate = merged(order.map((index) => parts[index]))
+          expect(
+            (estimate.operationalKilowattHours *
+              estimate.provenance.gCO2ePerKWh) /
+              1e6 +
+              estimate.embodiedCo2e,
+          ).toBeCloseTo(estimate.co2e, 15)
+        }
+      })
+
+      it('blends by the legacy total when a part does not say how it splits', () => {
+        const { operationalKilowattHours, embodiedCo2e, ...legacy } = rowAt(
+          400,
+          10,
+          0.001,
+        )
+        expect(operationalKilowattHours).toBe(10)
+        expect(embodiedCo2e).toBe(0.001)
+        const estimate = merged([rowAt(50, 30, 0.002), legacy])
+        // Legacy totals: 30 + 40 kWh at 50 g, and 10 + 2.5 kWh at 400 g.
+        expect(estimate.provenance.gCO2ePerKWh).toBeCloseTo(
+          (50 * 70 + 400 * 12.5) / 82.5,
+          10,
+        )
+        expect(estimate).not.toHaveProperty('operationalKilowattHours')
       })
 
       it('gives a service estimate neither field when its rows never had them', () => {
