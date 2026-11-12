@@ -33,7 +33,6 @@ import {
   LookupTableOutput,
   RecommendationResult,
 } from '@cloud-carbon-footprint/common'
-import { isElectricityMapsRequestError } from '@cloud-carbon-footprint/grid-intensity'
 import R from 'ramda'
 import AzureCredentialsProvider from './AzureCredentialsProvider'
 import ConsumptionManagementService from '../lib/ConsumptionManagement'
@@ -249,9 +248,6 @@ export default class AzureAccount extends CloudProviderAccount {
             grouping,
           )
         } catch (e) {
-          // Skipping the subscription would let the estimates cache keep
-          // those days without it for good; stop the run, as AWS and GCP do.
-          if (isElectricityMapsRequestError(e)) throw e
           this.logger.warn(
             `Unable to get estimate data for Azure subscription ${subscription.subscriptionId}: ${e.message}`,
           )

@@ -45,7 +45,7 @@ const point = (
   basis: 'location-consumption',
   factorType: 'lifecycle',
   isEstimated: false,
-  sourceId: 'electricitymaps',
+  sourceId: 'entsoe',
   retrievedAt: utc('2026-11-01T00:00:00.000Z'),
   ...overrides,
 })
@@ -72,7 +72,7 @@ describe('LocalIntensityStore', () => {
     ]
     await store.put(stored)
     const points = await new LocalIntensityStore(directory).get(
-      'electricitymaps',
+      'entsoe',
       'GB',
       utc('2026-01-01T00:00:00.000Z'),
       utc('2026-01-01T02:00:00.000Z'),
@@ -90,7 +90,7 @@ describe('LocalIntensityStore', () => {
         granularity: 'day',
       }),
     ])
-    const files = await readdir(join(directory, 'electricitymaps', 'GB'))
+    const files = await readdir(join(directory, 'entsoe', 'GB'))
     expect(files.sort()).toEqual([
       '2026-01.hour.json',
       '2026-02.day.json',
@@ -105,7 +105,7 @@ describe('LocalIntensityStore', () => {
       point('2026-02-01T00:00:00.000Z', '2026-02-01T01:00:00.000Z'),
     ])
     const points = await store.get(
-      'electricitymaps',
+      'entsoe',
       'GB',
       utc('2026-01-31T23:00:00.000Z'),
       utc('2026-02-01T01:00:00.000Z'),
@@ -150,7 +150,7 @@ describe('LocalIntensityStore', () => {
       point('2026-01-01T01:00:00.000Z', '2026-01-01T02:00:00.000Z'),
     ])
     const points = await store.get(
-      'electricitymaps',
+      'entsoe',
       'GB',
       utc('2026-01-01T00:00:00.000Z'),
       utc('2026-01-01T02:00:00.000Z'),
@@ -162,7 +162,7 @@ describe('LocalIntensityStore', () => {
   it('returns an empty list when nothing is stored', async () => {
     await expect(
       new LocalIntensityStore(join(directory, 'missing')).get(
-        'electricitymaps',
+        'entsoe',
         'GB',
         utc('2026-01-01T00:00:00.000Z'),
         utc('2026-01-01T01:00:00.000Z'),
@@ -172,12 +172,12 @@ describe('LocalIntensityStore', () => {
   })
 
   it('fails with the file path when a store file is corrupt', async () => {
-    const file = join(directory, 'electricitymaps', 'GB', '2026-01.hour.json')
-    await mkdir(join(directory, 'electricitymaps', 'GB'), { recursive: true })
+    const file = join(directory, 'entsoe', 'GB', '2026-01.hour.json')
+    await mkdir(join(directory, 'entsoe', 'GB'), { recursive: true })
     await writeFile(file, '{ not json')
     await expect(
       new LocalIntensityStore(directory).get(
-        'electricitymaps',
+        'entsoe',
         'GB',
         utc('2026-01-01T00:00:00.000Z'),
         utc('2026-01-01T01:00:00.000Z'),
@@ -187,7 +187,7 @@ describe('LocalIntensityStore', () => {
   })
 
   it('rejects a store file with an unsupported format version', async () => {
-    const zoneDirectory = join(directory, 'electricitymaps', 'GB')
+    const zoneDirectory = join(directory, 'entsoe', 'GB')
     await mkdir(zoneDirectory, { recursive: true })
     await writeFile(
       join(zoneDirectory, '2026-01.hour.json'),
@@ -195,7 +195,7 @@ describe('LocalIntensityStore', () => {
     )
     await expect(
       new LocalIntensityStore(directory).get(
-        'electricitymaps',
+        'entsoe',
         'GB',
         utc('2026-01-01T00:00:00.000Z'),
         utc('2026-01-01T01:00:00.000Z'),
@@ -206,12 +206,12 @@ describe('LocalIntensityStore', () => {
 
   it('rethrows file system errors other than a missing file', async () => {
     // A directory where the store file should be: EISDIR on read.
-    await mkdir(join(directory, 'electricitymaps', 'GB', '2026-01.hour.json'), {
+    await mkdir(join(directory, 'entsoe', 'GB', '2026-01.hour.json'), {
       recursive: true,
     })
     await expect(
       new LocalIntensityStore(directory).get(
-        'electricitymaps',
+        'entsoe',
         'GB',
         utc('2026-01-01T00:00:00.000Z'),
         utc('2026-01-01T01:00:00.000Z'),
@@ -260,11 +260,11 @@ describe('LocalIntensityStore', () => {
       }),
     ])
     await expect(
-      store.purge('electricitymaps', utc('2026-11-01T00:00:00.000Z')),
+      store.purge('entsoe', utc('2026-11-01T00:00:00.000Z')),
     ).resolves.toBe(2)
 
     const remaining = await store.get(
-      'electricitymaps',
+      'entsoe',
       'GB',
       utc('2026-01-01T00:00:00.000Z'),
       utc('2026-03-01T00:00:00.000Z'),
@@ -274,7 +274,7 @@ describe('LocalIntensityStore', () => {
       '2026-01-01T01:00:00.000Z',
     ])
     // A file left with no points is removed.
-    const files = await readdir(join(directory, 'electricitymaps', 'GB'))
+    const files = await readdir(join(directory, 'entsoe', 'GB'))
     expect(files).toEqual(['2026-01.hour.json'])
     await expect(
       store.get(
@@ -290,7 +290,7 @@ describe('LocalIntensityStore', () => {
   describe('overlapping writes', () => {
     const october = (store: LocalIntensityStore) =>
       store.get(
-        'electricitymaps',
+        'entsoe',
         'GB',
         utc('2026-10-01T00:00:00.000Z'),
         utc('2026-11-01T00:00:00.000Z'),
@@ -342,7 +342,7 @@ describe('LocalIntensityStore', () => {
         })),
       )
       const [removed] = await Promise.all([
-        store.purge('electricitymaps', utc('2026-10-01T00:00:00.000Z')),
+        store.purge('entsoe', utc('2026-10-01T00:00:00.000Z')),
         store.put(hourly('2026-10-02T00:00:00.000Z')),
       ])
       expect(removed).toBe(24)
@@ -355,7 +355,7 @@ describe('LocalIntensityStore', () => {
         store.put(hourly('2026-10-01T00:00:00.000Z')),
         store.put(hourly('2026-10-02T00:00:00.000Z')),
       ])
-      expect(await readdir(join(directory, 'electricitymaps', 'GB'))).toEqual([
+      expect(await readdir(join(directory, 'entsoe', 'GB'))).toEqual([
         '2026-10.hour.json',
       ])
     })
@@ -393,7 +393,7 @@ describe('LocalIntensityStore', () => {
       } finally {
         rename.mockRestore()
       }
-      expect(await readdir(join(directory, 'electricitymaps', 'GB'))).toEqual([
+      expect(await readdir(join(directory, 'entsoe', 'GB'))).toEqual([
         '2026-10.hour.json',
       ])
       await expect(october(store)).resolves.toHaveLength(1)
@@ -429,7 +429,7 @@ describe('LocalIntensityStore', () => {
       )
       await expect(
         store.get(
-          'electricitymaps',
+          'entsoe',
           'GB',
           utc('2026-10-01T00:00:00.000Z'),
           utc('2026-10-02T00:00:00.000Z'),
@@ -446,14 +446,12 @@ describe('LocalIntensityStore', () => {
       await new LocalIntensityStore(directory).put(
         hourly('2026-10-01T00:00:00.000Z', 1),
       )
-      await mkdir(join(directory, 'electricitymaps', 'gb'), {
+      await mkdir(join(directory, 'entsoe', 'gb'), {
         recursive: true,
       })
       await writeFile(
-        join(directory, 'electricitymaps', 'gb', '2026-10.hour.json'),
-        await readFile(
-          join(directory, 'electricitymaps', 'GB', '2026-10.hour.json'),
-        ),
+        join(directory, 'entsoe', 'gb', '2026-10.hour.json'),
+        await readFile(join(directory, 'entsoe', 'GB', '2026-10.hour.json')),
       )
     }
 
@@ -461,7 +459,7 @@ describe('LocalIntensityStore', () => {
       await collide()
       await expect(
         new LocalIntensityStore(directory).get(
-          'electricitymaps',
+          'entsoe',
           'gb',
           utc('2026-10-01T00:00:00.000Z'),
           utc('2026-10-02T00:00:00.000Z'),
@@ -486,10 +484,10 @@ describe('LocalIntensityStore', () => {
       await collide()
       const store = new LocalIntensityStore(directory)
       await writeFile(
-        join(directory, 'electricitymaps', 'GB', '2026-10.hour.json'),
+        join(directory, 'entsoe', 'GB', '2026-10.hour.json'),
         JSON.stringify({
           version: 1,
-          sourceId: 'ElectricityMaps',
+          sourceId: 'Entsoe',
           zoneId: 'GB',
           granularity: 'hour',
           points: [],
@@ -497,7 +495,7 @@ describe('LocalIntensityStore', () => {
       )
       await expect(
         store.put(hourly('2026-10-01T00:00:00.000Z', 1)),
-      ).rejects.toThrow("holds source 'ElectricityMaps', not 'electricitymaps'")
+      ).rejects.toThrow("holds source 'Entsoe', not 'entsoe'")
     })
   })
 
@@ -513,16 +511,14 @@ describe('LocalIntensityStore', () => {
     it('skips files and directories that are not store files', async () => {
       const store = new LocalIntensityStore(directory)
       await store.put([...expired('DE'), ...expired('FR')])
-      await writeFile(join(directory, 'electricitymaps', '.DS_Store'), 'x')
-      await writeFile(
-        join(directory, 'electricitymaps', 'DE', '.DS_Store'),
-        'x',
-      )
-      await mkdir(join(directory, 'electricitymaps', 'DE', 'notes'))
-      await expect(store.purge('electricitymaps', cutOff)).resolves.toBe(2)
-      expect(
-        (await readdir(join(directory, 'electricitymaps', 'DE'))).sort(),
-      ).toEqual(['.DS_Store', 'notes'])
+      await writeFile(join(directory, 'entsoe', '.DS_Store'), 'x')
+      await writeFile(join(directory, 'entsoe', 'DE', '.DS_Store'), 'x')
+      await mkdir(join(directory, 'entsoe', 'DE', 'notes'))
+      await expect(store.purge('entsoe', cutOff)).resolves.toBe(2)
+      expect((await readdir(join(directory, 'entsoe', 'DE'))).sort()).toEqual([
+        '.DS_Store',
+        'notes',
+      ])
     })
 
     it('keeps a temporary file changed in the last hour, even with a cut-off in the future', async () => {
@@ -533,11 +529,11 @@ describe('LocalIntensityStore', () => {
           zoneId: 'DE',
         })),
       )
-      const zoneDirectory = join(directory, 'electricitymaps', 'DE')
+      const zoneDirectory = join(directory, 'entsoe', 'DE')
       const inFlight = join(zoneDirectory, '2026-10.hour.json.4243-1.tmp')
       await writeFile(inFlight, '{"version":1,"poi')
       const tomorrow = new Date(Date.now() + 24 * 3600 * 1000)
-      await store.purge('electricitymaps', tomorrow)
+      await store.purge('entsoe', tomorrow)
       expect(await readdir(zoneDirectory)).toEqual([
         '2026-10.hour.json.4243-1.tmp',
       ])
@@ -551,14 +547,14 @@ describe('LocalIntensityStore', () => {
           zoneId: 'DE',
         })),
       )
-      const zoneDirectory = join(directory, 'electricitymaps', 'DE')
+      const zoneDirectory = join(directory, 'entsoe', 'DE')
       const stale = join(zoneDirectory, '2026-10.hour.json.4242-1.tmp')
       const inFlight = join(zoneDirectory, '2026-10.hour.json.4243-1.tmp')
       await writeFile(stale, '{"version":1,"poi')
       await writeFile(inFlight, '{"version":1,"poi')
       const longAgo = utc('2026-09-01T00:00:00.000Z')
       await utimes(stale, longAgo, longAgo)
-      await expect(store.purge('electricitymaps', cutOff)).resolves.toBe(0)
+      await expect(store.purge('entsoe', cutOff)).resolves.toBe(0)
       expect((await readdir(zoneDirectory)).sort()).toEqual([
         '2026-10.hour.json',
         '2026-10.hour.json.4243-1.tmp',
@@ -568,25 +564,16 @@ describe('LocalIntensityStore', () => {
     it('purges the other files when one is corrupt, then reports it', async () => {
       const store = new LocalIntensityStore(directory)
       await store.put([...expired('DE'), ...expired('FR')])
-      const corrupt = join(
-        directory,
-        'electricitymaps',
-        'DE',
-        '2026-10.hour.json',
-      )
+      const corrupt = join(directory, 'entsoe', 'DE', '2026-10.hour.json')
       await writeFile(corrupt, '{ not json')
-      await expect(store.purge('electricitymaps', cutOff)).rejects.toThrow(
-        corrupt,
-      )
-      expect(await readdir(join(directory, 'electricitymaps', 'FR'))).toEqual(
-        [],
-      )
+      await expect(store.purge('entsoe', cutOff)).rejects.toThrow(corrupt)
+      expect(await readdir(join(directory, 'entsoe', 'FR'))).toEqual([])
     })
 
     it('purges the other zones when a zone directory cannot be listed', async () => {
       const store = new LocalIntensityStore(directory)
       await store.put([...expired('DE'), ...expired('FR')])
-      const unreadable = join(directory, 'electricitymaps', 'DE')
+      const unreadable = join(directory, 'entsoe', 'DE')
       const original = fsPromises.readdir
       const list = jest
         .spyOn(fsPromises, 'readdir')
@@ -595,15 +582,13 @@ describe('LocalIntensityStore', () => {
             ? Promise.reject(new Error(`EACCES: scandir '${path}'`))
             : original(path, options)) as never)
       try {
-        await expect(store.purge('electricitymaps', cutOff)).rejects.toThrow(
+        await expect(store.purge('entsoe', cutOff)).rejects.toThrow(
           `could not purge 1 of the store's paths (points removed from the others: 1): EACCES: scandir '${unreadable}'`,
         )
       } finally {
         list.mockRestore()
       }
-      expect(await readdir(join(directory, 'electricitymaps', 'FR'))).toEqual(
-        [],
-      )
+      expect(await readdir(join(directory, 'entsoe', 'FR'))).toEqual([])
     })
   })
 
@@ -620,13 +605,13 @@ describe('LocalIntensityStore', () => {
     ])
     const content = JSON.parse(
       await readFile(
-        join(directory, 'electricitymaps', 'GB', '2026-01.hour.json'),
+        join(directory, 'entsoe', 'GB', '2026-01.hour.json'),
         'utf8',
       ),
     )
     expect(content).toMatchObject({
       version: 1,
-      sourceId: 'electricitymaps',
+      sourceId: 'entsoe',
       zoneId: 'GB',
       granularity: 'hour',
     })

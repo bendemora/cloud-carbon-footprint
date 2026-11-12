@@ -3,11 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { GRID_ZONES } from '@cloud-carbon-footprint/grid-intensity'
 import { AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH } from '../domain'
-import {
-  AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-  AWS_REGIONS,
-} from '../lib'
+import { AWS_REGIONS } from '../lib'
 
 // The regions the grid intensity capability report lists (packages/app).
 describe('AWS region tables', () => {
@@ -20,10 +18,10 @@ describe('AWS region tables', () => {
     expect(regions.filter((region) => !(region in factors))).toEqual([])
   })
 
-  it('name only regions of the region table in the factor table and the Electricity Maps zone map', () => {
+  it('name only regions of the region table in the factor table and the grid zone registry', () => {
     const unknown = [
       ...namedIn(AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH),
-      ...namedIn(AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES),
+      ...namedIn(GRID_ZONES.AWS),
     ].filter((region) => !regions.includes(region))
     expect(unknown).toEqual([])
   })

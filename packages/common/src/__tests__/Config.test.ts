@@ -138,26 +138,19 @@ describe('Config', () => {
     })
 
     it('reads comma-separated source and acknowledgement lists, trimming blanks', () => {
-      withEnvironment(
-        'GRID_INTENSITY_SOURCES',
-        ' electricitymaps, ,static ',
-        () => {
-          withEnvironment(
-            'GRID_INTENSITY_LICENCE_ACKNOWLEDGEMENTS',
-            'electricitymaps',
-            () => {
-              const config = getConfig()
-              expect(config.GRID_INTENSITY.SOURCES).toEqual([
-                'electricitymaps',
-                'static',
-              ])
-              expect(config.GRID_INTENSITY.LICENCE_ACKNOWLEDGEMENTS).toEqual([
-                'electricitymaps',
-              ])
-            },
-          )
-        },
-      )
+      withEnvironment('GRID_INTENSITY_SOURCES', ' neso, ,static ', () => {
+        withEnvironment(
+          'GRID_INTENSITY_LICENCE_ACKNOWLEDGEMENTS',
+          'neso',
+          () => {
+            const config = getConfig()
+            expect(config.GRID_INTENSITY.SOURCES).toEqual(['neso', 'static'])
+            expect(config.GRID_INTENSITY.LICENCE_ACKNOWLEDGEMENTS).toEqual([
+              'neso',
+            ])
+          },
+        )
+      })
     })
 
     it('reads the store mode, in any case, and the store path', () => {
@@ -184,6 +177,26 @@ describe('Config', () => {
         })
       },
     )
+  })
+
+  describe('removed settings', () => {
+    it('has no warning when none of them is set', () => {
+      withEnvironment('ELECTRICITY_MAPS_TOKEN', '', () => {
+        expect(getConfig().REMOVED_SETTING_WARNINGS).toEqual([])
+      })
+    })
+
+    it('warns that ELECTRICITY_MAPS_TOKEN is no longer read and names what is used instead, without the value', () => {
+      withEnvironment('ELECTRICITY_MAPS_TOKEN', 'a-token', () => {
+        const warnings = getConfig().REMOVED_SETTING_WARNINGS
+        expect(warnings).toHaveLength(1)
+        expect(warnings[0]).toContain(
+          'ELECTRICITY_MAPS_TOKEN is set but is no longer read.',
+        )
+        expect(warnings[0]).toContain('GRID_INTENSITY_SOURCES')
+        expect(warnings[0]).not.toContain('a-token')
+      })
+    })
   })
 
   describe('INCLUDE_ESTIMATES', () => {
