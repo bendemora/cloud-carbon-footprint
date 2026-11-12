@@ -15,75 +15,68 @@ We provide more detailed information in our [methodology](https://www.cloudcarbo
 CCF comes with a set of default emissions factors that are sourced from publicly available data sources such as government agencies, energy organizations, and research institutions. These default factors provide a reasonable estimate of carbon intensity for different energy sources and regions and are used when no specific configuration is provided.
 For reference, we have the default grid emissions factors located [here](https://www.cloudcarbonfootprint.org/docs/methodology#appendix-v-grid-emissions-factors) in the appendix of the Methodology.
 
-### Electricity Maps API Configuration
+### Grid intensity sources
 
-CCF can be configured to use the Electricity Maps API to obtain carbon intensity factors per region across the supported cloud providers.
+CCF resolves the carbon intensity for each estimate through a source layer. Each source says what it can deliver for a grid zone (how fine its data is, how far back it goes, its accounting basis and its licence), and for each usage period CCF uses the best source that covers it. The sources are listed in `GRID_INTENSITY_SOURCES`, in order of preference.
 
-How the current integration behaves (this is being replaced; see `docs/design/2026-11-localised-time-resolved-carbon-estimation.md` in the repository):
+With the default configuration the only source is `static`, the default emissions factors described above, and estimates are the ones those factors have always given. Sources that read grid operators and public agencies directly are being added, starting with NESO for Great Britain; `docs/design/2026-11-localised-time-resolved-carbon-estimation.md` in the repository has the plan.
 
-- For each usage row, CCF calls the `carbon-intensity/past` endpoint with the start of the row's usage period (midnight UTC of the day, or the first day of the period for coarser groupings). That endpoint returns the intensity for a single hour, so the value applied to the whole period is the intensity of that one hour, not an average over the day or month.
-- Values are memoised in memory per zone and period start for the lifetime of the process; nothing is persisted between runs.
-- The cloud-region to Electricity Maps zone mapping is maintained in each provider package.
-- Recommendations and lookup tables, which have no usage period of their own, use the intensity at midnight UTC at the start of the previous day.
-- If a request to Electricity Maps fails (a network error, a response that is not JSON, an HTTP 401 saying the token is invalid, or a server error, HTTP 5xx), the estimate stops with an error and nothing is written to the estimates cache, so the next run asks again. This holds for AWS, Google Cloud and Azure billing data alike; Azure used to leave out the subscription instead. Recommendations handle a failed request as before:
-  - AWS recommendations fail the request.
-  - Google Cloud reports zero savings, with a warning, for each recommendation it costs individually. An idle IP address recommendation in a project with other costed recommendations fails the whole recommendations request.
-  - Azure Advisor leaves out the subscription's recommendations, with a warning.
-- If Electricity Maps answers without a value in any other way (for example the HTTP 401 Electricity Maps sends when a valid token has no access to a zone or endpoint), CCF logs a warning and uses the default emissions factor for that row. Each row makes its own request and logs its own warning, and those rows are cached like any other.
+| Variable                                  | Default               | Notes                                                                                                                              |
+| ----------------------------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `GRID_INTENSITY_SOURCES`                  | `static`              | Source ids in order of preference, comma separated. Only `static` exists so far. An id that is not known is ignored, with a warning. |
+| `GRID_INTENSITY_LICENCE_ACKNOWLEDGEMENTS` | empty                 | Source ids you state you are licensed to use. Needed for a source whose licence is commercial, non-commercial or custom.            |
+| `GRID_INTENSITY_STORE`                    | `LOCAL`               | Where fetched intensity values are kept: `LOCAL` (JSON files) or `MONGODB` (uses `MONGODB_URI` and `MONGODB_CREDENTIALS`).          |
+| `GRID_INTENSITY_STORE_PATH`               | `.ccf/grid-intensity` | Directory of the `LOCAL` store.                                                                                                    |
+| `GRID_INTENSITY_CAPABILITY_TTL_HOURS`     | `24`                  | How long CCF remembers what a source said it can deliver, and a source's failures.                                                 |
 
-Here's how to configure CCF to use the Electricity Maps API:
+### Electricity Maps is no longer called
 
-1. **Obtain API Access**: First, you will need to obtain access to the Electricity Maps API. You can typically do this by signing up for an API token on the [Electricity Maps website](https://www.electricitymaps.com/get-our-data).
+Upstream CCF can replace the default factor with a value from the Electricity Maps API. This fork has removed that integration (`.adr/0026-grid_intensity_from_primary_publishers.md` in the repository): it does not call Electricity Maps, and no setting turns it back on.
 
-2. **Configuration File**: Open the CCF configuration file. This file is typically named `.env`, either located in the `api` or `cli` packages, and it is where you specify various settings for CCF. You can also refer to our [Configurations Glossary](https://www.cloudcarbonfootprint.org/docs/configurations-glossary#optionally-set-electricity-maps-api-token).
+If your configuration still sets `ELECTRICITY_MAPS_TOKEN`:
 
-3. **API Key Configuration**: In the configuration file, create a new environment variable called `ELECTRICITY_MAPS_TOKEN`, and set your token as the value. The name must be spelled exactly as shown; the code reads `ELECTRICITY_MAPS_TOKEN`.
+- The variable is ignored. CCF logs one warning that says so the first time it resolves a grid emissions factor: for estimates, recommendations and lookup tables, and when the doctor below runs. A request answered wholly from the estimates cache resolves nothing and logs nothing.
+- Estimates use the sources in `GRID_INTENSITY_SOURCES`, which means the default emissions factors unless you have configured another source. Expect the figures for regions that had an Electricity Maps value to change.
+- Estimates already in your cache are not touched, and CCF does not estimate a cached period again by itself. A cached row that was made with an Electricity Maps value keeps it until you delete the cache; see [Data Persistence and Caching](DataPersistenceAndCaching.md). Rows this fork cached name the source `electricitymaps-v3` in their `provenance`. Rows cached by upstream CCF carry no provenance, so nothing marks them.
+- Remove the variable from your `.env` file, and from your Docker secrets if you set it there, to stop the warning.
 
-   ```yaml
-   # Example CCF Configuration File
-
-   # Configuration for Electricity Maps API
-   ELECTRICITY_MAPS_TOKEN=your-token-here
-   ```
-
-4. **Run CCF**: Once you have configured CCF to use the Electricity Maps API, you can run the tool as you normally would. CCF will now use the Electricity Maps API to obtain carbon intensity factors for each region.
+One thing is unchanged. The default factors for Google Cloud regions are the figures Google publishes, and Google says it calculates them from Electricity Maps data. CCF reads them as constants and calls nothing.
 
 ### Where each estimate's factor came from
 
-AWS, Google Cloud and Azure service estimates computed from billing data (Cost and Usage Reports, the billing export and Consumption Management) carry a `provenance` object in the API response. It names the factor's source (`static` for the default factors, `electricitymaps-v3` when the Electricity Maps token is used) and the grid zone. It also gives the granularity, accounting basis and licence of the data, a quality tier from A (hourly data for hourly usage) to D (the static annual factors), and `gCO2ePerKWh`, the grid intensity applied to the row. A row's `kilowattHours` includes its embodied emissions converted to energy at that same factor, so for every row with a `co2e` value, `co2e` in tonnes is `kilowattHours` times `gCO2ePerKWh` divided by 1,000,000. (An AWS row whose instance type CCF cannot size has no `co2e`, an upstream limitation.)
+AWS, Google Cloud and Azure service estimates computed from billing data (Cost and Usage Reports, the billing export and Consumption Management) carry a `provenance` object in the API response. It names the factor's source (`static` for the default factors) and the source's zone. It also gives the granularity, accounting basis and licence of the data, a quality tier from A (hourly data for hourly usage) to D (the static annual factors), and `gCO2ePerKWh`, the grid intensity applied to the row. A row's `kilowattHours` includes its embodied emissions converted to energy at that same factor, so for every row with a `co2e` value, `co2e` in tonnes is `kilowattHours` times `gCO2ePerKWh` divided by 1,000,000. (An AWS row whose instance type CCF cannot size has no `co2e`, an upstream limitation.)
 
 Estimates from the cloud usage APIs (billing data turned off), rows cached before the upgrade, and Alibaba Cloud and on-premise estimates do not carry it. Provenance roughly doubles the size of each service estimate in the API response and in the estimates cache. Neither the API response nor the MongoDB cache has a size limit that this affects. With the JSON file cache (local filesystem or Google Cloud Storage), one period's estimates must stay under about 512 MiB of JSON, and provenance halves the number of rows that fit, to about 1.1 million; see [Data Persistence and Caching](DataPersistenceAndCaching.md).
 
 ### Checking what your configuration can deliver
 
-The grid intensity doctor reports, for every AWS, Google Cloud and Azure region, what each configured grid intensity source can deliver. It needs no cloud credentials and does not call Electricity Maps. A provider whose estimates are turned off (for example `AWS_INCLUDE_ESTIMATES=false`) is left out.
+The grid intensity doctor reports, for every AWS, Google Cloud and Azure region, the electricity grid the region is on and what each configured grid intensity source can deliver for it. It needs no cloud credentials and asks no source for data. A provider whose estimates are turned off (for example `AWS_INCLUDE_ESTIMATES=false`) is left out.
 
 ```sh
 yarn workspace @cloud-carbon-footprint/cli grid-intensity-doctor
 ```
 
-It prints one row per region and source. With the default configuration the only source is `static`, the default emissions factors:
+It prints one row per region and source. With the default configuration the only source is `static`, the default emissions factors. Four of its rows:
 
 ```
-| Provider | Region    | Source | Zone          | Last 24 hours | Last 30 days | Last 12 months | Licence | Error
-| AWS      | us-east-1 | static | aws:us-east-1 | D             | D            | D              | open    |
-| AWS      | us-east-2 | static | aws:us-east-2 | D             | D            | D              | open    |
+| Provider | Region                  | Grid zone    | Source | Source zone                 | Last 24 hours | Last 30 days | Last 12 months | Licence | Error
+| AWS      | us-east-1               | US-MIDA-PJM  | static | aws:us-east-1               | D             | D            | D              | open    |
+| AWS      | eu-west-2               | GB           | static | aws:eu-west-2               | D             | D            | D              | open    |
+| GCP      | europe-west2            | GB           | static | gcp:europe-west2            | D             | D            | D              | open    |
+| AZURE    | uksouth                 | GB           | static | azure:uksouth               | D             | D            | D              | open    |
 ```
 
-- **Zone** is the source's grid zone for the region, or `-` when it has none.
+- **Grid zone** is the electricity grid the region is on: a country code, followed by a grid area where the grid is divided (`GB`, `US-MIDA-PJM`). It is `-` when CCF has no grid zone for the region, which then uses the default factors only.
+- **Source zone** is the name the source has for the zone it would use for the region, or `-` when it has none.
 - **Last 24 hours**, **Last 30 days** and **Last 12 months** give the best quality tier the source can deliver for a day of usage in that window, from A to D as described above, or `-` when it can deliver none. A day is the finest usage period CCF produces, so hourly data shows as tier B. A percentage after the tier is the share of the days in the window that the source can serve, shown when that is not all of them.
 - **Licence** is `open`, `acknowledged`, `needs-acknowledgement` or `unavailable`. A source whose licence needs acknowledgement is not used until it is listed in `GRID_INTENSITY_LICENCE_ACKNOWLEDGEMENTS`. `unavailable` means the source has no zone or no data for the region.
 - **Error** shows a probe of the source that failed, or the reason CCF has stopped asking the source for that zone.
 
 Below the table the doctor lists the attribution text of each source.
 
-With `ELECTRICITY_MAPS_TOKEN` set, the doctor also states that the Electricity Maps lookup described above is in use and that its estimates are tier C (one hourly sample applied to a day or longer), and adds a column with each region's Electricity Maps zone. Regions without a zone keep the default factors. The doctor does not call Electricity Maps, so it does not show whether your token has access to a zone.
-
 The API serves the same report as JSON at `GET /api/grid-intensity/capabilities`.
 
 ### Additional Notes
 
-- If you do not have access to the Electricity Maps API, you can still use CCF with the default emissions factors. Simply do not configure the tool to use the Electricity Maps API, and it will use the default factors instead.
-- If Electricity Maps returns no value for a region, or the region has no Electricity Maps zone, the app falls back to the default emissions factors. A failed request stops the estimate instead (see above).
-- The Electricity Maps API free tier is for non-commercial use; commercial use requires a subscription. Check the terms that apply to your deployment before configuring a token.
-- For more information on the Electricity Maps API, please visit the [Electricity Maps API Documentation](https://app.electricitymaps.com/api/docs/reference).
+- A region that no configured source covers, or whose source has no data for the period, uses the default emissions factors. The `provenance` of each row and the doctor both show when that is the case.
+- Every source has a licence. Its attribution text is listed by the doctor, and a source with a commercial, non-commercial or custom licence is not used until you acknowledge it.
