@@ -8,6 +8,8 @@ import CloudConstants, {
 import FootprintEstimate, {
   estimateCo2,
   KilowattHoursByServiceAndUsageUnit,
+  KilowattHourTotals,
+  operationalKilowattHoursOf,
 } from '../FootprintEstimate'
 import IFootprintEstimator from '../IFootprintEstimator'
 import UnknownUsage from './UnknownUsage'
@@ -27,50 +29,62 @@ export default class UnknownEstimator implements IFootprintEstimator {
     constants: CloudConstants,
   ): FootprintEstimate[] {
     return data.map((data: UnknownUsage) => {
-      const estimatedKilowattHours = this.estimateKilowattHours(
+      const totals = this.totalsFor(
         data,
         constants.kilowattHoursByServiceAndUsageUnit,
+      )
+      const estimatedKilowattHours = this.estimateKilowattHours(
+        data,
+        totals,
+        (known) => known.kilowattHours,
       )
       const estimatedCo2eEmissions = estimateCo2(
         estimatedKilowattHours,
         region,
         emissionsFactors,
       )
+      // ADR 0024: the operational energy comes from the average of
+      // operational energy alone, and whatever else the legacy estimate
+      // holds is embodied emissions inherited from the known rows.
+      const operationalKilowattHours = this.estimateKilowattHours(
+        data,
+        totals,
+        operationalKilowattHoursOf,
+      )
       return {
         timestamp: data.timestamp,
         kilowattHours: estimatedKilowattHours,
         co2e: estimatedCo2eEmissions,
         usesAverageCPUConstant: false,
+        operationalKilowattHours,
+        embodiedCo2e:
+          estimatedCo2eEmissions -
+          estimateCo2(operationalKilowattHours, region, emissionsFactors),
       }
     })
   }
 
-  private estimateKilowattHours(
+  /** The running totals for the usage's service and unit, or for its unit. */
+  private totalsFor(
     unknownUsage: UnknownUsage,
     kilowattHoursByServiceAndUsageUnit: KilowattHoursByServiceAndUsageUnit,
-  ): number {
-    const serviceAndUsageUnit =
-      kilowattHoursByServiceAndUsageUnit[unknownUsage.service] &&
-      kilowattHoursByServiceAndUsageUnit[unknownUsage.service][
+  ): KilowattHourTotals | undefined {
+    return (
+      kilowattHoursByServiceAndUsageUnit[unknownUsage.service]?.[
         unknownUsage.usageUnit
-      ]
+      ] || kilowattHoursByServiceAndUsageUnit.total[unknownUsage.usageUnit]
+    )
+  }
 
-    if (serviceAndUsageUnit)
-      return (
-        (serviceAndUsageUnit.kilowattHours /
-          serviceAndUsageUnit[this.estimateKilowattHoursBy]) *
-        unknownUsage[this.estimateKilowattHoursBy]
-      )
-
-    const totalForUsageUnit =
-      kilowattHoursByServiceAndUsageUnit.total[unknownUsage.usageUnit]
-
-    if (totalForUsageUnit)
-      return (
-        (totalForUsageUnit.kilowattHours /
-          totalForUsageUnit[this.estimateKilowattHoursBy]) *
-        unknownUsage[this.estimateKilowattHoursBy]
-      )
-    return 0
+  private estimateKilowattHours(
+    unknownUsage: UnknownUsage,
+    totals: KilowattHourTotals | undefined,
+    energyOf: (totals: KilowattHourTotals) => number,
+  ): number {
+    if (!totals) return 0
+    return (
+      (energyOf(totals) / totals[this.estimateKilowattHoursBy]) *
+      unknownUsage[this.estimateKilowattHoursBy]
+    )
   }
 }

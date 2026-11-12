@@ -4,7 +4,7 @@ Date: 2026-11-10
 
 ## Status
 
-Proposed
+Accepted. Design section 12 puts these fields before the first live source, and the project owner asked on 2026-11-12 for that plan to be carried out. Implemented in the pull request that changed this status. The implementation notes at the end record what was built and where it departs from the text below.
 
 ## Decision
 
@@ -43,10 +43,20 @@ Alternatives considered:
 
 ## Consequences
 
-- `core`, `common`, `aws`, `gcp`, `azure` and `ali` change. The new fields are optional, so the API, the client, the CLI and cache files stay compatible. On-premise rows report `operationalKilowattHours` equal to `kilowattHours` and `embodiedCo2e` of 0.
+- `core`, `common`, `aws`, `gcp`, `azure` and `ali` change. The new fields are optional, so the API, the client, the CLI and cache files stay compatible. On-premise output does not gain the fields (see the implementation notes; this sentence first said it would report `operationalKilowattHours` equal to `kilowattHours` and `embodiedCo2e` of 0).
 - Output in the default configuration does not change. Provider tests that compare with upstream values stay as they are, and new tests assert the identity in point 4 for every row.
 - Rows that accumulate (same period, region, service, account and tags) sum the two fields as they sum the totals. A merged row has the fields only if every part has them.
 - Rows cached before the change have neither field. The export leaves their energy and embodied columns empty until the period is estimated again from billing data (ADR 0025).
 - The API documentation says what `kilowattHours` is: a legacy total that stops being an energy measure once intensity varies. `Provenance.gCO2ePerKWh` keeps its meaning.
 - Two known faults stay until the model version decides them: the embodied share that AWS and Azure unknown-usage rows inherit (GCP rows do not), and the embodied energy inside `kilowattHours`. Until then the legacy energy of rows resolved from a live source is not comparable between periods.
 - Each row grows by two numbers, about 60 characters of JSON, so slightly fewer rows fit within the cache and response size limits described in `microsite/docs/ConfigurationOptions/DataPersistenceAndCaching.md`.
+
+## Implementation notes (2026-11-12)
+
+- **Where the fields are set.** Rows estimated from billing data on AWS, Google Cloud, Azure and Alibaba Cloud carry both fields. A compute row that has an embodied part sets them from its parts: `operationalKilowattHours` is the compute and memory energy, `embodiedCo2e` is the result of `EmbodiedEmissionsEstimator`. Every other row (storage, networking, memory, and compute with no embodied part) is marked by `asOperationalEstimate` in `packages/core`, which sets `operationalKilowattHours` to `kilowattHours` and `embodiedCo2e` to 0.
+- **Rows that do not get them.** A row with no finite `co2e` (point 4) is left alone. Rows from the cloud usage APIs (billing data turned off) are also left alone: they are built in `packages/app` from estimators that have no embodied model, they carry no provenance either, and nothing in this programme reads them.
+- **On-premise.** The consequences first said that on-premise rows report the two fields. They do not. On-premise output is a table with one energy column and one emissions column per period (`OnPremiseDataOutput` in `packages/common`), not a list of service estimates, and the export, the factor table and calibration do not read it. Its energy columns are operational energy already, because on-premise estimates have no embodied model. Reporting the fields would add eight columns that repeat four existing ones and four zeros, in a file format other tools may parse.
+- **Unknown usage (point 5).** `KilowattHourTotals` records its operational sum only once it differs from `kilowattHours`, so the running totals of usage with no embodied emissions keep the shape they had. `operationalKilowattHoursOf` reads a total either way. `UnknownEstimator` returns `operationalKilowattHours` from the operational average and `embodiedCo2e` as the rest of the row's `co2e`. On Google Cloud the running average never held embodied energy, so its unknown-usage rows have `embodiedCo2e` of 0.
+- **Rows that accumulate.** `appendOrAccumulateEstimatesByDay` sums the two fields with the totals, and removes them from the merged row when any part lacks them.
+- **Merged rows whose parts differ in provenance.** `mergeProvenance` still weights the two intensities by the legacy `kilowattHours`. For such a row `co2e - embodiedCo2e` is exact, but the identity in point 4, read with the blended `gCO2ePerKWh`, is approximate. Rows of one region and usage period normally carry identical provenance, and then the identity is exact.
+- **Tests.** The AWS, Google Cloud and Azure billing tests assert the identity in point 4 on every row that has the fields, and each has a case that resolves the same usage at 400 and at 50 gCO2e/kWh and expects the same operational energy and embodied emissions from both. The values the existing tests compare with upstream's did not change.

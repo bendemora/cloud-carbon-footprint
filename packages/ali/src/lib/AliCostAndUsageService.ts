@@ -148,6 +148,17 @@ export default class AliCostAndUsageService {
           cost: row.cost,
           region: row.region,
           usesAverageCPUConstant: false,
+          // ADR 0024: the electricity alone, and the embodied emissions.
+          operationalKilowattHours:
+            computeFootprintEstimate.kilowattHours +
+            memoryFootprintEstimate.kilowattHours +
+            storageFootprintEstimate.kilowattHours +
+            networkingFootprintEstimate.kilowattHours +
+            (unknownFootprintEstimate.operationalKilowattHours ??
+              unknownFootprintEstimate.kilowattHours),
+          embodiedCo2e:
+            embodiedEmissions.co2e +
+            (unknownFootprintEstimate.embodiedCo2e ?? 0),
         })
       })
       this.logger.info('serviceEstimates:' + JSON.stringify(serviceEstimates))

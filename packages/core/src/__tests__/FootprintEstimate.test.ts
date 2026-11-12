@@ -7,10 +7,14 @@ import FootprintEstimate, {
   AccumulateKilowattHoursBy,
   aggregateEstimatesByDay,
   appendOrAccumulateEstimatesByDay,
+  asOperationalEstimate,
   estimateCo2,
   estimateKwh,
   getWattsByAverageOrMedian,
+  KilowattHoursByServiceAndUsageUnit,
+  MutableEstimationResult,
   MutableServiceEstimate,
+  operationalKilowattHoursOf,
 } from '../FootprintEstimate'
 import BillingDataRow from '../BillingDataRow'
 import { COMPUTE_PROCESSOR_TYPES } from '../compute'
@@ -468,6 +472,185 @@ describe('FootprintEstimate', () => {
         expect(kilowattHoursByServiceAndUsageUnit).toEqual(expectedResult)
       },
     )
+  })
+
+  describe('operational energy and embodied emissions (ADR 0024)', () => {
+    const row = (overrides: Partial<BillingDataRow> = {}): BillingDataRow =>
+      ({
+        timestamp: dayOne,
+        accountId: 'test account id',
+        accountName: 'test-account',
+        region: 'us-east-1',
+        usageType: 'test',
+        usageUnit: 'Hrs',
+        serviceName: 'AmazonEC2',
+        usageAmount: 2,
+        cost: 5,
+        cloudProvider: 'AWS',
+        tags: {},
+        ...overrides,
+      }) as BillingDataRow
+
+    describe('asOperationalEstimate', () => {
+      it('counts all the energy of an estimate as electricity and none of its emissions as embodied', () => {
+        expect(
+          asOperationalEstimate({
+            timestamp: dayOne,
+            kilowattHours: 20,
+            co2e: 0.008,
+            usesAverageCPUConstant: true,
+          }),
+        ).toEqual({
+          timestamp: dayOne,
+          kilowattHours: 20,
+          co2e: 0.008,
+          usesAverageCPUConstant: true,
+          operationalKilowattHours: 20,
+          embodiedCo2e: 0,
+        })
+      })
+
+      it('leaves an estimate that already says how it splits as it is', () => {
+        const estimate = {
+          timestamp: dayOne,
+          kilowattHours: 25,
+          co2e: 0.01,
+          operationalKilowattHours: 20,
+          embodiedCo2e: 0.002,
+        }
+        expect(asOperationalEstimate(estimate)).toBe(estimate)
+      })
+
+      it('leaves an estimate with no co2e value without the two fields', () => {
+        const estimate = { timestamp: dayOne, kilowattHours: 0, co2e: NaN }
+        expect(asOperationalEstimate(estimate)).toBe(estimate)
+      })
+    })
+
+    describe('accumulateKilowattHours', () => {
+      const accumulate = (
+        totals: KilowattHoursByServiceAndUsageUnit,
+        kilowattHours: number,
+        operationalKilowattHours?: number,
+      ) =>
+        accumulateKilowattHours(
+          totals,
+          row(),
+          kilowattHours,
+          AccumulateKilowattHoursBy.COST,
+          operationalKilowattHours,
+        )
+
+      it('records no operational sum while every row is all electricity, so the totals keep their shape', () => {
+        const totals: KilowattHoursByServiceAndUsageUnit = { total: {} }
+        accumulate(totals, 20)
+        accumulate(totals, 10)
+        expect(totals).toEqual({
+          AmazonEC2: { Hrs: { cost: 10, kilowattHours: 30 } },
+          total: { Hrs: { cost: 10, kilowattHours: 30 } },
+        })
+        expect(operationalKilowattHoursOf(totals.total.Hrs)).toBe(30)
+      })
+
+      it('records the operational sum from the first row with embodied emissions in its total, counting earlier rows as all electricity', () => {
+        const totals: KilowattHoursByServiceAndUsageUnit = { total: {} }
+        accumulate(totals, 20)
+        accumulate(totals, 30, 24)
+        accumulate(totals, 10)
+        const expected = {
+          cost: 15,
+          kilowattHours: 60,
+          operationalKilowattHours: 54,
+        }
+        expect(totals).toEqual({
+          AmazonEC2: { Hrs: expected },
+          total: { Hrs: expected },
+        })
+        expect(operationalKilowattHoursOf(totals.total.Hrs)).toBe(54)
+      })
+
+      it('records the operational sum of a first row with embodied emissions', () => {
+        const totals: KilowattHoursByServiceAndUsageUnit = { total: {} }
+        accumulate(totals, 30, 24)
+        expect(totals.AmazonEC2.Hrs).toEqual({
+          cost: 5,
+          kilowattHours: 30,
+          operationalKilowattHours: 24,
+        })
+        expect(totals.total.Hrs).toEqual(totals.AmazonEC2.Hrs)
+      })
+    })
+
+    describe('appendOrAccumulateEstimatesByDay', () => {
+      const split = {
+        timestamp: dayOne,
+        kilowattHours: 25,
+        co2e: 0.01,
+        operationalKilowattHours: 20,
+        embodiedCo2e: 0.002,
+      }
+      const noSplit = { timestamp: dayOne, kilowattHours: 0, co2e: NaN }
+      const merged = (estimates: FootprintEstimate[]) => {
+        const results: MutableEstimationResult[] = []
+        for (const estimate of estimates)
+          appendOrAccumulateEstimatesByDay(
+            results,
+            row(),
+            estimate,
+            grouping,
+            [],
+          )
+        expect(results).toHaveLength(1)
+        expect(results[0].serviceEstimates).toHaveLength(1)
+        return results[0].serviceEstimates[0]
+      }
+
+      it('carries the two fields onto the service estimate', () => {
+        expect(merged([split])).toMatchObject({
+          kilowattHours: 25,
+          co2e: 0.01,
+          operationalKilowattHours: 20,
+          embodiedCo2e: 0.002,
+        })
+      })
+
+      it('sums them when rows accumulate into one service estimate', () => {
+        const estimate = merged([
+          split,
+          split,
+          asOperationalEstimate({
+            timestamp: dayOne,
+            kilowattHours: 25,
+            co2e: 0.01,
+          }),
+        ])
+        expect(estimate.kilowattHours).toBe(75)
+        expect(estimate.operationalKilowattHours).toBe(65)
+        expect(estimate.embodiedCo2e).toBeCloseTo(0.004, 15)
+      })
+
+      it('gives a service estimate neither field when a row without them is part of it, whatever the order', () => {
+        for (const estimates of [
+          [split, noSplit, split],
+          [noSplit, split, split],
+          [split, split, noSplit],
+        ]) {
+          const estimate = merged(estimates)
+          expect(estimate).not.toHaveProperty('operationalKilowattHours')
+          expect(estimate).not.toHaveProperty('embodiedCo2e')
+        }
+      })
+
+      it('gives a service estimate neither field when its rows never had them', () => {
+        const estimate = merged([
+          { timestamp: dayOne, kilowattHours: 5, co2e: 0.002 },
+          { timestamp: dayOne, kilowattHours: 5, co2e: 0.002 },
+        ])
+        expect(estimate.kilowattHours).toBe(10)
+        expect(estimate).not.toHaveProperty('operationalKilowattHours')
+        expect(estimate).not.toHaveProperty('embodiedCo2e')
+      })
+    })
   })
 
   describe('getWattsByAverageOrMedian', () => {

@@ -30,6 +30,7 @@ import {
   accumulateKilowattHours,
   AccumulateKilowattHoursBy,
   appendOrAccumulateEstimatesByDay,
+  asOperationalEstimate,
   calculateGigabyteHours,
   CloudConstants,
   CloudConstantsEmissionsFactors,
@@ -146,7 +147,7 @@ export default class ConsumptionManagementService {
         appendOrAccumulateEstimatesByDay(
           results,
           consumptionDetailRow,
-          { ...footprintEstimate, provenance },
+          { ...asOperationalEstimate(footprintEstimate), provenance },
           grouping,
           [],
         )
@@ -167,7 +168,7 @@ export default class ConsumptionManagementService {
           appendOrAccumulateEstimatesByDay(
             results,
             rowData,
-            { ...footprintEstimate, provenance },
+            { ...asOperationalEstimate(footprintEstimate), provenance },
             grouping,
             [],
           )
@@ -487,15 +488,16 @@ export default class ConsumptionManagementService {
         // if there exist any kilowatt hours from a memory footprint,
         // add the kwh and co2e for both compute and memory
         if (memoryFootprint.kilowattHours || embodiedEmissions.co2e) {
+          const operationalKilowattHours =
+            computeFootprint.kilowattHours + memoryFootprint.kilowattHours
           const kilowattHours =
-            computeFootprint.kilowattHours +
-            memoryFootprint.kilowattHours +
-            embodiedEmissions.kilowattHours
+            operationalKilowattHours + embodiedEmissions.kilowattHours
           accumulateKilowattHours(
             AZURE_CLOUD_CONSTANTS.KILOWATT_HOURS_BY_SERVICE_AND_USAGE_UNIT,
             consumptionDetailRow,
             kilowattHours,
             AccumulateKilowattHoursBy.USAGE_AMOUNT,
+            operationalKilowattHours,
           )
 
           return {
@@ -506,6 +508,8 @@ export default class ConsumptionManagementService {
               memoryFootprint.co2e +
               embodiedEmissions.co2e,
             usesAverageCPUConstant: computeFootprint.usesAverageCPUConstant,
+            operationalKilowattHours,
+            embodiedCo2e: embodiedEmissions.co2e,
           }
         }
 
