@@ -19,15 +19,38 @@ For reference, we have the default grid emissions factors located [here](https:/
 
 CCF resolves the carbon intensity for each estimate through a source layer. Each source says what it can deliver for a grid zone (how fine its data is, how far back it goes, its accounting basis and its licence), and for each usage period CCF uses the best source that covers it. The sources are listed in `GRID_INTENSITY_SOURCES`, in order of preference.
 
-With the default configuration the only source is `static`, the default emissions factors described above, and estimates are the ones those factors have always given. Sources that read grid operators and public agencies directly are being added, starting with NESO for Great Britain; `docs/design/2026-11-localised-time-resolved-carbon-estimation.md` in the repository has the plan.
+With the default configuration the only source is `static`, the default emissions factors described above, and estimates are the ones those factors have always given. Sources that read grid operators and public agencies directly are being added. The first is `neso`, for Great Britain, described below; `docs/design/2026-11-localised-time-resolved-carbon-estimation.md` in the repository has the plan for the others.
 
 | Variable                                  | Default               | Notes                                                                                                                              |
 | ----------------------------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `GRID_INTENSITY_SOURCES`                  | `static`              | Source ids in order of preference, comma separated. Only `static` exists so far. An id that is not known is ignored, with a warning. |
+| `GRID_INTENSITY_SOURCES`                  | `static`              | Source ids in order of preference, comma separated. `static` and `neso` exist so far. An id that is not known is ignored, with a warning. |
 | `GRID_INTENSITY_LICENCE_ACKNOWLEDGEMENTS` | empty                 | Source ids you state you are licensed to use. Needed for a source whose licence is commercial, non-commercial or custom.            |
 | `GRID_INTENSITY_STORE`                    | `LOCAL`               | Where fetched intensity values are kept: `LOCAL` (JSON files) or `MONGODB` (uses `MONGODB_URI` and `MONGODB_CREDENTIALS`).          |
 | `GRID_INTENSITY_STORE_PATH`               | `.ccf/grid-intensity` | Directory of the `LOCAL` store.                                                                                                    |
 | `GRID_INTENSITY_CAPABILITY_TTL_HOURS`     | `24`                  | How long CCF remembers what a source said it can deliver, and a source's failures.                                                 |
+
+### NESO for Great Britain
+
+The `neso` source reads the Carbon Intensity API of the National Energy System Operator (NESO), which runs the electricity system of Great Britain. The API is public. It needs no registration and no key.
+
+To use the source, list it ahead of the default factors:
+
+```
+GRID_INTENSITY_SOURCES=neso,static
+```
+
+- **What it covers.** AWS `eu-west-2`, Azure `uksouth` and `ukwest` (and the Azure location `uk`), and Google Cloud `europe-west2`, from 11 September 2017. Every other region goes on using the default factors.
+- **What it reads.** NESO's national series of outturn values, which its API calls "actual". NESO publishes one for each half hour. CCF averages the two half hours of each hour, and averages those hours over the usage period of each estimate. It does not use NESO's forecasts.
+- **What the numbers are.** Consumption-based: the electricity generated in Great Britain and imported into it, over demand, corrected for transmission losses. NESO's factors are direct CO2 from generation, so the values are grams of CO2 per kWh, not CO2e. The `provenance` of each row says so (`basis` is `location-consumption` and `factorType` is `direct`). Expect the figures for these regions to change when you turn the source on: the default factor is one annual figure, and the NESO value is the one for the period. For Google Cloud `europe-west2` the NESO value is used whether or not `GCP_USE_CARBON_FREE_ENERGY_PERCENTAGE` is set, because that setting changes the default factors only.
+- **Quality tier.** B: hourly data averaged over a day or longer of usage. Tier A needs hourly usage, which CCF does not produce yet.
+- **How recent the data is.** CCF asks NESO for an hour two hours after the hour has ended, because NESO can still change a value shortly after it first publishes it. An estimate for a day that has not ended, or that ended less than two hours ago, uses the hours it can get and is marked estimated (tier C) and provisional (`isProvisional`), so it can be told apart and estimated again later. A long-running API server asks again within the hour whether NESO has newer hours.
+- **When NESO cannot be reached, or answers with an error.** CCF logs one warning, uses the default factors for the hours it has not stored, and asks NESO again after `GRID_INTENSITY_CAPABILITY_TTL_HOURS`. The `provenance` of the rows estimated from the default factors names `static` as their source and marks them `isProvisional`.
+- **Storage.** The hours CCF has fetched are kept in the store that `GRID_INTENSITY_STORE` selects, so an hour is fetched once.
+- **Requests.** CCF sends NESO one request at a time, at least a second apart, because NESO limits the rate of requests and publishes no figure. A day of usage is one request. The first estimate of a long period therefore waits about a second per day of Great Britain usage, about six minutes for a year; after that the hours are in the store.
+- **Licence.** CC BY 4.0. It needs no acknowledgement. The doctor below lists the attribution text, which is: "Contains data from the Carbon Intensity API by National Energy System Operator (NESO), https://carbonintensity.org.uk, licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Half-hourly values averaged to hours." Show it wherever you publish figures made with this source.
+- **Known limitation.** The value is the national figure for Great Britain, not a figure for the place a data centre is in. NESO also publishes regional figures, but they are forecasts with no measured value behind them, and the cloud providers name only a metropolitan area for their regions. NESO's regional model put London about a quarter above the national figure in the first half of October 2026, so the national figure may understate the carbon intensity of electricity used there.
+
+This source is tested against responses recorded from NESO's API on 10 November 2026. It has not yet been run against the live API. The doctor described below checks that your deployment can reach NESO. With `neso` configured it prints a second row for every region. The rows of the Great Britain regions show the source zone `national` and tier B, and their Error column says why if NESO cannot be reached. Every other region shows `unavailable` for `neso`. In the first three hours of a UTC day the last 24 hours can show tier C, or a percentage after the tier, because the hours that have just ended are held back.
 
 ### Electricity Maps is no longer called
 
@@ -52,7 +75,7 @@ Provenance is not on estimates from the cloud usage APIs (billing data turned of
 
 ### Checking what your configuration can deliver
 
-The grid intensity doctor reports, for every AWS, Google Cloud and Azure region, the electricity grid the region is on and what each configured grid intensity source can deliver for it. It needs no cloud credentials and asks no source for data. A provider whose estimates are turned off (for example `AWS_INCLUDE_ESTIMATES=false`) is left out.
+The grid intensity doctor reports, for every AWS, Google Cloud and Azure region, the electricity grid the region is on and what each configured grid intensity source can deliver for it. It needs no cloud credentials and fetches no intensity data. It does check that each source can be reached, which for `neso` is one small request to NESO's API. A provider whose estimates are turned off (for example `AWS_INCLUDE_ESTIMATES=false`) is left out.
 
 ```sh
 yarn workspace @cloud-carbon-footprint/cli grid-intensity-doctor
