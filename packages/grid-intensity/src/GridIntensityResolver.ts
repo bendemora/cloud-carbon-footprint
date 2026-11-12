@@ -91,6 +91,20 @@ export class NoIntensityAvailableError extends Error {
 /** Data quality bounds for fetched points (design section 13). */
 const MAX_G_CO2E_PER_KWH = 1500
 const HOUR_MS = 60 * 60 * 1000
+/**
+ * How old an answer about the end of a source's data may be before the
+ * resolver asks again, for a usage period that runs past that end. The end
+ * of live data moves with the clock, and the capability TTL (24 hours by
+ * default) is too long for it: a server that asked yesterday morning would
+ * go on serving yesterday from the hours the source had then.
+ */
+const END_OF_DATA_RECHECK_MS = HOUR_MS
+
+interface CachedCapability {
+  capability: ZoneCapability | null
+  askedAt: number
+  expiresAt: number
+}
 
 interface Candidate {
   source: GridIntensitySource
@@ -180,10 +194,7 @@ export class GridIntensityResolver implements IntensityResolver {
   private readonly modelVersion: string
   private readonly logger: ResolverLogger
   private readonly now: () => Date
-  private readonly capabilityCache = new Map<
-    string,
-    { capability: ZoneCapability | null; expiresAt: number }
-  >()
+  private readonly capabilityCache = new Map<string, CachedCapability>()
   private readonly statusCache = new Map<
     string,
     { status: SourceStatus; expiresAt: number }
@@ -247,7 +258,7 @@ export class GridIntensityResolver implements IntensityResolver {
     let mayImprove = false
     const coarser: Candidate[] = []
     for (const source of this.sources) {
-      const candidate = await this.candidate(source, provider, region)
+      const candidate = await this.candidate(source, provider, region, end)
       if (!candidate) continue
       const finest = finestOf(candidate.capability.granularities)
       if (!isAtLeastAsFine(finest, fineEnough)) {
@@ -345,7 +356,10 @@ export class GridIntensityResolver implements IntensityResolver {
     const views: SourceView[] = []
     for (const source of this.sources) {
       const zoneId = source.mapRegion(provider, region)
-      const capability = zoneId ? await this.capability(source, zoneId) : null
+      // The report is about windows that end now.
+      const capability = zoneId
+        ? await this.capability(source, zoneId, this.now())
+        : null
       const failure = zoneId ? this.failureOf(source.id, zoneId) : undefined
       views.push({
         source,
@@ -387,10 +401,11 @@ export class GridIntensityResolver implements IntensityResolver {
     source: GridIntensitySource,
     provider: CloudProvider,
     region: string,
+    periodEnd: Date,
   ): Promise<Candidate | null> {
     const zoneId = source.mapRegion(provider, region)
     if (!zoneId) return null
-    const capability = await this.capability(source, zoneId)
+    const capability = await this.capability(source, zoneId, periodEnd)
     if (!capability || !capability.granularities.length) return null
     if (
       requiresAcknowledgement(capability.licence) &&
@@ -415,11 +430,18 @@ export class GridIntensityResolver implements IntensityResolver {
   private async capability(
     source: GridIntensitySource,
     zoneId: string,
+    /** The end of the period the answer is needed for. */
+    neededUntil: Date,
   ): Promise<ZoneCapability | null> {
     const zoneRef = `${source.id}|${zoneId}`
     const nowMs = this.now().getTime()
     const cached = this.capabilityCache.get(zoneRef)
-    if (cached && cached.expiresAt > nowMs) return cached.capability
+    if (
+      cached &&
+      cached.expiresAt > nowMs &&
+      !this.endOfDataIsStale(cached, zoneRef, neededUntil, nowMs)
+    )
+      return cached.capability
     let capability: ZoneCapability | null
     try {
       capability = await source.capabilities(zoneId)
@@ -429,9 +451,32 @@ export class GridIntensityResolver implements IntensityResolver {
     }
     this.capabilityCache.set(zoneRef, {
       capability,
+      askedAt: nowMs,
       expiresAt: nowMs + this.ttlMs,
     })
     return capability
+  }
+
+  /**
+   * Whether to ask a source again before the TTL: the answer on hand says
+   * its data ends before the period does, the answer is an hour old or more,
+   * and the zone's fetches are not stopped by a failure. An answer with no
+   * end of data is kept for the TTL.
+   */
+  private endOfDataIsStale(
+    cached: CachedCapability,
+    zoneRef: string,
+    neededUntil: Date,
+    nowMs: number,
+  ): boolean {
+    const latest = cached.capability?.latest
+    const failure = this.failures.get(zoneRef)
+    return (
+      latest !== undefined &&
+      neededUntil > latest &&
+      nowMs - cached.askedAt >= END_OF_DATA_RECHECK_MS &&
+      !(failure && failure.until > nowMs)
+    )
   }
 
   private standIn(source: GridIntensitySource, zoneId: string): ZoneCapability {
