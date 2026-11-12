@@ -77,6 +77,10 @@ export interface ZoneCapability {
   /**
    * Start of the lookback window the caller may fetch. Unbounded when absent.
    * It limits fetches only: stored points from before it are still used.
+   * It also decides the provisional marker (ADR 0025): a usage period that
+   * lies before the first period the source can be asked for is final, and
+   * a source that leaves it out keeps every period it has no data for
+   * provisional.
    * The resolver fetches whole periods of the requested granularity and asks
    * only for periods that lie wholly in [earliest, latest], so a source
    * should report both on its own period boundaries (a monthly source: the

@@ -16,7 +16,12 @@ import {
 import { resolveEmissionsFactors } from '../resolveEmissionsFactors'
 import { StaticSource } from '../sources/StaticSource'
 import { InMemoryIntensityStore } from '../stores/InMemoryIntensityStore'
-import { IntensityResolver } from '../types'
+import {
+  Granularity,
+  IntensityPoint,
+  IntensityResolver,
+  IntensityStore,
+} from '../types'
 import { FakeSource } from './fixtures/FakeSource'
 
 const utc = (iso: string) => new Date(iso)
@@ -299,6 +304,41 @@ describe('provisional results (ADR 0025)', () => {
       expect(live.fetchCalls).toHaveLength(1)
     })
 
+    it('do not replace a settled point the store holds', async () => {
+      // A source that answers with more than it was asked for: two hours
+      // before the range, all preliminary.
+      class Overreaching extends FakeSource {
+        async fetch(
+          zoneId: string,
+          start: Date,
+          end: Date,
+          granularity: Granularity,
+        ): Promise<IntensityPoint[]> {
+          const earlier = new Date(start.getTime() - 2 * 3600 * 1000)
+          return super.fetch(zoneId, earlier, end, granularity)
+        }
+      }
+      const store = new InMemoryIntensityStore()
+      const settled = new FakeSource({
+        granularities: ['hour'],
+        value: () => 200,
+        omit: ['2026-03-10T23:00:00.000Z'],
+      })
+      await resolveDay(createResolver({ sources: [settled], store }).resolver)
+
+      const live = new Overreaching({
+        granularities: ['hour'],
+        value: () => 100,
+        preliminary: () => true,
+      })
+      const { resolver } = createResolver({ sources: [live], store })
+      const result = await resolveDay(resolver)
+      // 23 settled hours at 200 and the one preliminary hour at 100.
+      expect(result.gCO2ePerKWh).toBeCloseTo((23 * 200 + 100) / 24, 10)
+      expect(result.points.filter((p) => p.isPreliminary)).toHaveLength(1)
+      expect(result.provenance.isProvisional).toBe(true)
+    })
+
     it('of a session-retention source stay with its other points', async () => {
       const store = new InMemoryIntensityStore()
       const live = new FakeSource({
@@ -315,6 +355,296 @@ describe('provisional results (ADR 0025)', () => {
       ).toHaveLength(0)
       await resolveDay(resolver)
       expect(live.fetchCalls).toHaveLength(1)
+    })
+  })
+
+  describe("the start of a source's data", () => {
+    const AUGUST = utc('2026-08-01T00:00:00.000Z')
+
+    it('makes an earlier period final even while the source is failing', async () => {
+      const live = new FakeSource({ granularities: ['hour'], earliest: AUGUST })
+      const { resolver } = createResolver({ sources: [live, staticSource()] })
+      live.failFetch = true
+      const september = await resolver.resolve(
+        'AWS',
+        'eu-west-2',
+        utc('2026-09-01T00:00:00.000Z'),
+        utc('2026-09-02T00:00:00.000Z'),
+      )
+      expect(september.provenance).toMatchObject({
+        sourceId: 'static',
+        isProvisional: true,
+      })
+      // The failure is remembered, but March is not the source's to serve.
+      const { provenance } = await resolveDay(resolver)
+      expect(provenance.sourceId).toBe('static')
+      expect(provenance).not.toHaveProperty('isProvisional')
+    })
+
+    it('is taken at the first whole period the resolver can ask for: a day asked by the day', async () => {
+      // Hourly data exists from noon, but a day of usage is asked for by the
+      // day, and that day starts before the data does.
+      const live = new FakeSource({
+        granularities: ['hour', 'day'],
+        earliest: NOON,
+      })
+      const { resolver } = createResolver({ sources: [live, staticSource()] })
+      const { provenance } = await resolveDay(resolver)
+      expect(live.fetchCalls).toHaveLength(0)
+      expect(provenance.sourceId).toBe('static')
+      expect(provenance).not.toHaveProperty('isProvisional')
+    })
+
+    it('is taken at the first whole period the resolver can ask for: a start inside an hour', async () => {
+      const live = new FakeSource({
+        granularities: ['hour'],
+        earliest: utc('2026-03-10T12:30:00.000Z'),
+      })
+      const { resolver } = createResolver({ sources: [live, staticSource()] })
+      const result = await resolveDay(resolver)
+      // 13:00 to midnight is all this source will ever have for the day.
+      expect(result.points).toHaveLength(11)
+      expect(result.provenance).toMatchObject({
+        sourceId: 'fake',
+        qualityTier: 'C',
+      })
+      expect(result.provenance).not.toHaveProperty('isProvisional')
+    })
+
+    it('is taken at the first whole period the resolver can ask for: a week asked by the day', async () => {
+      const live = new FakeSource({
+        granularities: ['day'],
+        earliest: utc('2026-04-08T05:00:00.000Z'),
+      })
+      const { resolver } = createResolver({ sources: [live, staticSource()] })
+      const result = await resolver.resolve(
+        'AWS',
+        'eu-west-2',
+        utc('2026-04-06T00:00:00.000Z'),
+        utc('2026-04-13T00:00:00.000Z'),
+      )
+      expect(result.points).toHaveLength(4)
+      expect(result.provenance.sourceId).toBe('fake')
+      expect(result.provenance).not.toHaveProperty('isProvisional')
+    })
+
+    it('is taken at the first whole period the resolver can ask for: a month that began before it', async () => {
+      const monthly = new FakeSource({
+        granularities: ['month'],
+        earliest: utc('2026-03-05T00:00:00.000Z'),
+      })
+      const { resolver } = createResolver({
+        sources: [monthly, staticSource()],
+      })
+      const { provenance } = await resolveDay(resolver)
+      expect(monthly.fetchCalls).toHaveLength(0)
+      expect(provenance.sourceId).toBe('static')
+      expect(provenance).not.toHaveProperty('isProvisional')
+    })
+
+    it('does not make a result final when the store could not be read', async () => {
+      // The store may hold points from before the lookback; they were not
+      // seen, so the static answer may be worse than the store allows.
+      const unreadable: IntensityStore = {
+        get: () => Promise.reject(new Error('ECONNREFUSED')),
+        put: async () => undefined,
+        purge: async () => 0,
+      }
+      const live = new FakeSource({ granularities: ['hour'], earliest: AUGUST })
+      const { resolver } = createResolver({
+        sources: [live, staticSource()],
+        store: unreadable,
+      })
+      const { provenance } = await resolveDay(resolver)
+      expect(provenance).toMatchObject({
+        sourceId: 'static',
+        isProvisional: true,
+      })
+    })
+  })
+
+  describe('every source tried for the period counts', () => {
+    it('a coarser source that has not published yet, with the static table answering', async () => {
+      const monthly = new FakeSource({
+        granularities: ['month'],
+        latest: utc('2026-03-01T00:00:00.000Z'),
+      })
+      const { resolver, advanceHours } = createResolver({
+        sources: [monthly, staticSource()],
+      })
+      const before = await resolveDay(resolver)
+      expect(before.provenance).toMatchObject({
+        sourceId: 'static',
+        isProvisional: true,
+      })
+      // Once the month is published the monthly value is the final answer.
+      monthly.latest = utc('2026-04-01T00:00:00.000Z')
+      advanceHours(25)
+      const after = await resolveDay(resolver)
+      expect(after.provenance).toMatchObject({
+        sourceId: 'fake',
+        granularity: 'month',
+        qualityTier: 'C',
+      })
+      expect(after.provenance).not.toHaveProperty('isProvisional')
+    })
+
+    it('a source after the one that answered in part, when it fails', async () => {
+      // The first source will never have more than the afternoon, so on its
+      // own its partial answer is final. A failing second source could
+      // still cover the day.
+      const first = new FakeSource({
+        id: 'first',
+        granularities: ['hour'],
+        earliest: NOON,
+      })
+      const second = new FakeSource({
+        id: 'second',
+        granularities: ['hour'],
+        failFetch: true,
+      })
+      const { resolver } = createResolver({
+        sources: [first, second, staticSource()],
+      })
+      const { provenance } = await resolveDay(resolver)
+      expect(provenance).toMatchObject({
+        sourceId: 'first',
+        qualityTier: 'C',
+        isProvisional: true,
+      })
+    })
+  })
+
+  describe('other usage periods', () => {
+    it('a week that runs past the end of the data is provisional', async () => {
+      const live = new FakeSource({
+        granularities: ['day'],
+        latest: utc('2026-04-09T00:00:00.000Z'),
+      })
+      const { resolver } = createResolver({ sources: [live, staticSource()] })
+      const { provenance } = await resolver.resolve(
+        'AWS',
+        'eu-west-2',
+        utc('2026-04-06T00:00:00.000Z'),
+        utc('2026-04-13T00:00:00.000Z'),
+      )
+      expect(provenance).toMatchObject({
+        sourceId: 'fake',
+        isEstimated: true,
+        isProvisional: true,
+      })
+    })
+
+    it('an hour served in full is final, and an hour not published yet is provisional', async () => {
+      const live = new FakeSource({ granularities: ['hour'], latest: NOON })
+      const { resolver } = createResolver({ sources: [live, staticSource()] })
+      const served = await resolver.resolve(
+        'AWS',
+        'eu-west-2',
+        utc('2026-03-10T09:00:00.000Z'),
+        utc('2026-03-10T10:00:00.000Z'),
+      )
+      expect(served.provenance).toMatchObject({
+        sourceId: 'fake',
+        qualityTier: 'A',
+      })
+      expect(served.provenance).not.toHaveProperty('isProvisional')
+      const notYet = await resolver.resolve(
+        'AWS',
+        'eu-west-2',
+        utc('2026-03-10T15:00:00.000Z'),
+        utc('2026-03-10T16:00:00.000Z'),
+      )
+      expect(notYet.provenance).toMatchObject({
+        sourceId: 'static',
+        isProvisional: true,
+      })
+    })
+  })
+
+  describe('the marker goes away', () => {
+    it('when a gap fills', async () => {
+      const live = new FakeSource({
+        granularities: ['hour'],
+        omit: ['2026-03-10T15:00:00.000Z'],
+      })
+      const { resolver, advanceHours } = createResolver({
+        sources: [live, staticSource()],
+      })
+      expect((await resolveDay(resolver)).provenance.isProvisional).toBe(true)
+      live.omit = []
+      advanceHours(25)
+      const { provenance } = await resolveDay(resolver)
+      expect(provenance).toMatchObject({ sourceId: 'fake', qualityTier: 'B' })
+      expect(provenance).not.toHaveProperty('isProvisional')
+    })
+
+    it('when the end of the data moves past the period', async () => {
+      const live = new FakeSource({ latest: NOON })
+      const { resolver, advanceHours } = createResolver({
+        sources: [live, staticSource()],
+      })
+      expect((await resolveDay(resolver)).provenance.isProvisional).toBe(true)
+      live.latest = DAY_END
+      advanceHours(25)
+      const { provenance } = await resolveDay(resolver)
+      expect(provenance).toMatchObject({ sourceId: 'fake', qualityTier: 'B' })
+      expect(provenance).not.toHaveProperty('isProvisional')
+    })
+
+    it('when a failing source answers again', async () => {
+      const live = new FakeSource({ failFetch: true })
+      const { resolver, advanceHours } = createResolver({
+        sources: [live, staticSource()],
+      })
+      expect((await resolveDay(resolver)).provenance).toMatchObject({
+        sourceId: 'static',
+        isProvisional: true,
+      })
+      live.failFetch = false
+      advanceHours(25)
+      const { provenance } = await resolveDay(resolver)
+      expect(provenance.sourceId).toBe('fake')
+      expect(provenance).not.toHaveProperty('isProvisional')
+    })
+  })
+
+  describe('a source that cannot be probed, in a new process', () => {
+    const seed = async (store: IntensityStore, omit: string[] = []) => {
+      const { resolver } = createResolver({
+        sources: [new FakeSource({ granularities: ['hour'], omit })],
+        store,
+      })
+      await resolveDay(resolver)
+    }
+
+    it('gives a final result from a store that holds the whole period', async () => {
+      const store = new InMemoryIntensityStore()
+      await seed(store)
+      const down = new FakeSource({ failCapabilities: true })
+      const { resolver } = createResolver({
+        sources: [down, staticSource()],
+        store,
+      })
+      const { provenance } = await resolveDay(resolver)
+      expect(provenance).toMatchObject({ sourceId: 'fake', qualityTier: 'B' })
+      expect(provenance).not.toHaveProperty('isProvisional')
+    })
+
+    it('gives a provisional result from a store that holds part of it', async () => {
+      const store = new InMemoryIntensityStore()
+      await seed(store, ['2026-03-10T15:00:00.000Z'])
+      const down = new FakeSource({ failCapabilities: true })
+      const { resolver } = createResolver({
+        sources: [down, staticSource()],
+        store,
+      })
+      const { provenance } = await resolveDay(resolver)
+      expect(provenance).toMatchObject({
+        sourceId: 'fake',
+        qualityTier: 'C',
+        isProvisional: true,
+      })
     })
   })
 
