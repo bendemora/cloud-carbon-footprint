@@ -195,6 +195,7 @@ export interface IntensityPoint {
   basis: IntensityBasis
   factorType: EmissionFactorType
   isEstimated: boolean
+  isPreliminary?: boolean         // a value the source will replace (ADR 0025)
   sourceId: string
   retrievedAt: Date
 }
@@ -241,6 +242,7 @@ export interface Provenance {
   qualityTier: 'A' | 'B' | 'C' | 'D'
   modelVersion: string            // CCF energy model version (section 9)
   calibrationVersion?: string     // section 10
+  isProvisional?: boolean         // a better value may come later (ADR 0025)
 }
 
 export interface ResolvedIntensity {
@@ -300,6 +302,7 @@ Implementation notes (Phase 1):
 - A source that covers only part of the period is a fallback, not the answer: later sources are tried, and the first that covers the whole period at a tier no worse than the best partial result wins (so a full later live source beats it, and the static source does not). With no full result, the partial one with the best tier, then coverage, is used.
 - A failed fetch or capability probe stops that zone's fetches for the TTL, but stored points are still used. After a failed probe the last known capability is kept; in a fresh process with none, the store is read at each granularity, finest first.
 - Fetched points that are not whole UTC periods of the requested granularity, source and zone are dropped with a warning, so points never overlap and coverage cannot read 1 over a gap.
+- A result is marked provisional (`Provenance.isProvisional`, ADR 0025) when the source that answered, or a source tried before it, could serve more of the period on a later run: its settled points do not cover the whole period, and either it could not be asked or the missing part lies at or after the start of its data. The tier is not changed by the marker. A point the source flags as preliminary (`IntensityPoint.isPreliminary`) is used, marks the result, is kept in memory for the capability TTL and is never written to the configured store. ADR 0025's implementation notes list the cases.
 - Warnings are logged at most once per source, zone and kind per TTL rather than per run, because the default resolver lives for the API server's process. Store read and write failures are reported per source and zone, and again after the store has worked in between.
 - Points from `session`-retention sources are kept in an in-memory store owned by the resolver and released by the first resolve call after the TTL, so a run fetches each period once; they are never written to the configured store.
 - A resolved intensity of 0 reaches `estimateCo2` as both the region and the `Unknown` factor, because `estimateCo2` treats 0 as missing; `estimateKwh` returns 0 kWh rather than Infinity when no non-zero factor exists.
@@ -465,7 +468,7 @@ Suggested PR granularity inside a phase: interfaces and static source; one sourc
   - 1b, done (PRs #23, #25 and #26): the doctor command and `GET /grid-intensity/capabilities`. Neither needs external credentials. Section 6.5 records how they were built.
   - 1c, cancelled on 2026-11-12 (ADR 0026): the Electricity Maps v4 source. The v3 lookup the fork inherited was removed at the same time, and with it the midnight-sample defect (section 3.3). The acceptance criterion that waited for 1c, a daily run on a real account that shows tier B, is now part of Phase 2's.
 - Phase 2 is next. The open sources need no paid data, and the first of them will be the first live data to go through the resolver, which so far has only been exercised by the static source and a fake one.
-- The row fields of ADR 0024 are built. The marker of ADR 0025 is merged before the first live source, so that every row estimated from live data carries both.
+- The row fields of ADR 0024 and the marker of ADR 0025 are built, so every row estimated from live data carries both. The replace and refresh operations of ADR 0025 are not built yet.
 - Phases 3 to 8 are not started.
 
 ## 13. Testing

@@ -197,6 +197,8 @@ export const resolveEmissionsFactors = async (
         qualityTier: 'D',
         gCO2ePerKWh: applied === undefined ? NaN : tonnesToGrams(applied),
         modelVersion: 'unversioned',
+        // A configured source could not serve the period yet (ADR 0025).
+        ...(error.mayImprove && { isProvisional: true }),
       },
     }
   }

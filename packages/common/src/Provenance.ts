@@ -61,4 +61,12 @@ export interface Provenance {
   modelVersion: string
   /** Calibration version (section 10), when calibration was applied. */
   calibrationVersion?: string
+  /**
+   * True when the same configuration could give a better intensity for the
+   * row later (ADR 0025): the source did not cover the whole usage period
+   * yet, its values were preliminary, or a source ranked ahead of it could
+   * not be reached. Absent on a final row, and on rows estimated before the
+   * marker existed, which count as final. It does not change qualityTier.
+   */
+  isProvisional?: boolean
 }

@@ -23,6 +23,7 @@ const COMPARED_FIELDS: (keyof Provenance)[] = [
   'calibrationVersion',
 ]
 
+/** Whether two rows got the same intensity; the provisional marker aside. */
 const same = (a: Provenance, b: Provenance): boolean =>
   COMPARED_FIELDS.every((field) => a[field] === b[field])
 
@@ -69,7 +70,8 @@ const mergeLicence = (a: LicenceId, b: LicenceId): LicenceId => {
  * embodied emissions converted at each row's factor, so that mean is the
  * merged row's co2e (tonnes) x 1e6 divided by its kilowattHours, not an
  * operational-only intensity. When only one row has provenance, that one is kept, marked
- * estimated.
+ * estimated. The merged row is provisional (ADR 0025) when either row is;
+ * rows that differ in nothing else are not marked estimated for it.
  */
 export const mergeProvenance = (
   a: Provenance | undefined,
@@ -79,7 +81,7 @@ export const mergeProvenance = (
 ): Provenance | undefined => {
   if (!a && !b) return undefined
   if (!a || !b) return markEstimated(a ?? b)
-  if (same(a, b)) return a
+  if (same(a, b)) return b.isProvisional && !a.isProvisional ? b : a
 
   const lower = a.qualityTier >= b.qualityTier ? a : b
   const totalKilowattHours = aKilowattHours + bKilowattHours
@@ -88,9 +90,11 @@ export const mergeProvenance = (
       ? (a.gCO2ePerKWh * aKilowattHours + b.gCO2ePerKWh * bKilowattHours) /
         totalKilowattHours
       : (a.gCO2ePerKWh + b.gCO2ePerKWh) / 2
+  const { isProvisional: _lowerIsProvisional, ...merged } = markEstimated(lower)
   return {
-    ...markEstimated(lower),
+    ...merged,
     licenceId: mergeLicence(a.licenceId, b.licenceId),
     gCO2ePerKWh,
+    ...((a.isProvisional || b.isProvisional) && { isProvisional: true }),
   }
 }

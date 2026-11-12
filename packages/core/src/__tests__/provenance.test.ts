@@ -42,6 +42,57 @@ describe('mergeProvenance', () => {
     expect(mergeProvenance(undefined, 1, undefined, 1)).toBeUndefined()
   })
 
+  describe('the provisional marker (ADR 0025)', () => {
+    const provisional = (provenance: Provenance): Provenance => ({
+      ...provenance,
+      isProvisional: true,
+    })
+
+    it('is kept when both rows carry it and are otherwise identical', () => {
+      expect(
+        mergeProvenance(
+          provisional(staticProvenance),
+          1,
+          provisional(staticProvenance),
+          2,
+        ),
+      ).toEqual(provisional(staticProvenance))
+    })
+
+    it('marks the merged row when only the higher-tier row carries it', () => {
+      expect(
+        mergeProvenance(provisional(liveProvenance), 3, staticProvenance, 1),
+      ).toMatchObject({ sourceId: 'static', isProvisional: true })
+    })
+
+    it('marks the merged row when only the lower-tier row carries it', () => {
+      expect(
+        mergeProvenance(liveProvenance, 3, provisional(staticProvenance), 1),
+      ).toMatchObject({ sourceId: 'static', isProvisional: true })
+    })
+
+    it('marks a merged row whose parts differ only in the marker, without marking it estimated', () => {
+      expect(
+        mergeProvenance(staticProvenance, 1, provisional(staticProvenance), 1),
+      ).toEqual(provisional(staticProvenance))
+      expect(
+        mergeProvenance(provisional(staticProvenance), 1, staticProvenance, 1),
+      ).toEqual(provisional(staticProvenance))
+    })
+
+    it('is absent from a merged row when neither part carries it', () => {
+      expect(
+        mergeProvenance(liveProvenance, 3, staticProvenance, 1),
+      ).not.toHaveProperty('isProvisional')
+    })
+
+    it('is kept when only one row has provenance', () => {
+      expect(
+        mergeProvenance(provisional(liveProvenance), 1, undefined, 1),
+      ).toMatchObject({ isEstimated: true, isProvisional: true })
+    })
+  })
+
   it('keeps identical provenance as it is', () => {
     expect(
       mergeProvenance(staticProvenance, 1, { ...staticProvenance }, 2),
