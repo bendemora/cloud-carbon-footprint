@@ -14,7 +14,7 @@ The fork does not call Electricity Maps, hold a licence for its data, or build i
 2. The Electricity Maps v4 source planned as Phase 1c is cancelled. No Electricity Maps source, dataset converter or zone namespace is built.
 3. Live grid intensity comes from the organisations that publish the underlying data: system operators, market operators and public agencies, or the official body they publish through. A source built into this repository reads the primary publisher. Services that republish or model that data are not built in. That also covers WattTime, which design section 5.1 listed as an optional later source of marginal intensity: it is not built.
 4. The region to zone maps the lookup used are kept, because they record which electricity grid each cloud region is on, and every source needs that. They become the grid zone registry of design section 5.5, in `packages/grid-intensity`, under names that do not refer to Electricity Maps. The zone identifiers do not change.
-5. A deployment that holds data from another party can still load it through the file source (design section 5.4) under its own licence acknowledgement. That is the operator's choice and cost. The tool does not depend on it.
+5. A deployment that holds data from another party will be able to load it through the file source (design section 5.4) under its own licence acknowledgement. That is the operator's choice and cost, and the tool does not depend on it. The file source is Phase 2 work and is not built yet.
 
 ## Context
 
@@ -32,18 +32,19 @@ Six points bear on the decision. Points 2 to 4 were checked for this record on 2
 What this decision does not remove:
 
 - The static grid factors for Google Cloud, and their carbon-free-energy variant, are the figures Google publishes for its regions (`getGCPEmissionsFactors` in `packages/gcp/src/domain/GcpFootprintEstimationConstants.ts`, from https://cloud.google.com/sustainability/region-carbon). That page says the hourly grid mix and carbon intensity data behind them is from Electricity Maps (read on 2026-11-12). So every Google Cloud estimate in the default configuration rests on Electricity Maps data at one remove. The figures are constants that upstream CCF took from Google; they cost nothing and call nothing. Replacing them would change every Google Cloud estimate, which makes it a decision for the energy model version (design section 9). Design section 14, item 9, carries it.
+- The microsite's home page lists upstream CCF's innovation partners, and one of them is Tomorrow (`microsite/src/components/innovationPartners.js`, with three logo files under `microsite/static/img/logos`). Tomorrow is the earlier name of the company that makes Electricity Maps; that is general knowledge and was not checked for this record. Nothing calls it: it is a logo and a link in a list that is upstream's. The list is left whole until the site is revised (Phase 8), and what a fork should show there is the owner's decision.
 
 What is given up:
 
 - One API that covers more than 130 zones with consumption-based, flow-traced intensity and lifecycle factors.
 - A single accounting basis. The primary publishers differ: NESO is consumption-based with direct CO2 factors, and intensity derived from a generation mix is production-based with the factor table the programme chooses (design section 5.3). Provenance carries the basis and the factor type on every row, so the difference is visible, but it is real.
 - Coverage of grid zones for which no open hourly publisher has been found. Those stay on the static annual factors, tier D, until one is.
-- A built-in source of marginal intensity, which WattTime would have been. The file source still accepts data on a marginal basis (design section 5.4).
+- A built-in source of marginal intensity, which WattTime would have been. The file source, once built, is to accept data on a marginal basis (design section 5.4).
 
 Alternatives considered:
 
 - Keep the v3 lookup for deployments that hold a token. It keeps a code path that goes round the source layer, and the sampling defect with it, and nobody on the project can test it against the live service.
-- Keep Electricity Maps as an optional source, built later against v4. Recording its fixtures needs a paid or trial token, and it conflicts with the decision to depend on primary publishers. The file source already serves a deployment that has bought data.
+- Keep Electricity Maps as an optional source, built later against v4. Recording its fixtures needs a paid or trial token, and it conflicts with the decision to depend on primary publishers. The file source planned for Phase 2 (design section 5.4) is the route for a deployment that has bought data.
 
 ## Consequences
 
@@ -53,5 +54,6 @@ Alternatives considered:
 - Azure goes back to upstream's handling of a subscription whose estimate fails: it logs a warning and leaves the subscription out. The error that made it stop the run no longer exists.
 - The capability report and the doctor command show each region's grid zone, where they showed the Electricity Maps zone while a token was set.
 - Phase 1 closes with 1a and 1b. The daily run on a real account that shows tier B is Phase 2's acceptance criterion, met from open sources.
-- No tier needs a paid subscription. Every intensity the tool applies is a static factor, a value from a primary publisher with a declared licence, or a value from a file the operator supplied. The Google Cloud static factors are the one place found where Electricity Maps data still reaches an estimate, through Google's publication, as the context says. The AWS and Azure tables cite other sources (the methodology page lists them); the Alibaba Cloud table states none in the code and was not traced, and neither was the on-premise table.
+- No tier needs a paid subscription. Today every intensity the tool applies is a static factor. From Phase 2 it is a static factor, a value from a primary publisher with a declared licence, or a value from a file the operator supplied.
+- Until the file source is built, a deployment that holds bought data, Electricity Maps data included, has no way to load it. Its estimates use the static factors. The Google Cloud static factors are the one place found where Electricity Maps data still reaches an estimate, through Google's publication, as the context says. The AWS and Azure tables cite other sources (the methodology page lists them); the Alibaba Cloud table states none in the code and was not traced, and neither was the on-premise table.
 - Upstream CCF keeps the integration. A sync from upstream will conflict in the files this removes, and the upstream pull request candidates in Phase 8 no longer include an Electricity Maps v4 source.
