@@ -8,12 +8,12 @@ sidebar_position: 5
 ## Carbon Intensity Emissions Factors
 
 Carbon Intensity Emissions Factors are values that represent the amount of carbon dioxide equivalent (CO2e) emissions produced per unit of energy consumed. These factors vary depending on factors like energy source and geographical region. CCF utilizes these factors to estimate emissions associated with cloud infrastructure energy consumption.
-We provide more detailed information in our [methodology](https://www.cloudcarbonfootprint.org/docs/methodology#carbon-estimates-co2e) on how the tool uses carbon intensity emissions factors and how the defaults are sourced.
+We provide more detailed information in our [methodology](../HowItWorks/Methodology.md#carbon-estimates-co2e) on how the tool uses carbon intensity emissions factors and how the defaults are sourced.
 
 ### Default Emissions Factors
 
 CCF comes with a set of default emissions factors that are sourced from publicly available data sources such as government agencies, energy organizations, and research institutions. These default factors provide a reasonable estimate of carbon intensity for different energy sources and regions and are used when no specific configuration is provided.
-For reference, we have the default grid emissions factors located [here](https://www.cloudcarbonfootprint.org/docs/methodology#appendix-v-grid-emissions-factors) in the appendix of the Methodology.
+For reference, we have the default grid emissions factors located [here](../HowItWorks/Methodology.md#appendix-v-grid-emissions-factors) in the appendix of the Methodology.
 
 ### Grid intensity sources
 

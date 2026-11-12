@@ -190,6 +190,11 @@ export const GRID_ZONES: {
  * The grid zone of a cloud region, or null when the registry has none for
  * it: the region is unknown, is not on one grid (a GCP multi-region), or
  * belongs to a provider the registry does not cover.
+ *
+ * The region is matched exactly as the provider's region table spells it,
+ * which is the name the provider package gives to resolveEmissionsFactors.
+ * Some Azure names there are mixed case (EastUS, CentralUS), so 'eastus'
+ * finds nothing.
  */
 export const gridZoneOf = (
   provider: CloudProvider,
