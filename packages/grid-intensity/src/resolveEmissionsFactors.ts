@@ -10,6 +10,7 @@ import {
   GridIntensityResolver,
   NoIntensityAvailableError,
 } from './GridIntensityResolver'
+import { NESO_SOURCE_ID, NesoSource } from './sources/NesoSource'
 import {
   appliedStaticFactor,
   StaticFactors,
@@ -52,6 +53,7 @@ let defaultStore: (IntensityStore & { close?: () => Promise<void> }) | undefined
 
 const SOURCE_FACTORIES: Record<string, () => GridIntensitySource> = {
   [STATIC_SOURCE_ID]: () => new StaticSource(staticTables),
+  [NESO_SOURCE_ID]: () => new NesoSource(),
 }
 
 const createDefaultResolver = (): GridIntensityResolver => {
