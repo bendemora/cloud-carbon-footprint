@@ -20,6 +20,7 @@ import {
 } from './sources/StaticSource'
 import { STATIC_SOURCE_ID } from './qualityTier'
 import { createIntensityStore } from './stores/createIntensityStore'
+import { RecentReadsStore } from './stores/RecentReadsStore'
 import { gramsToTonnes, tonnesToGrams } from './units'
 import {
   CapabilityReporter,
@@ -64,7 +65,11 @@ const createDefaultResolver = (): GridIntensityResolver => {
   // say so wherever grid intensity is first resolved.
   for (const warning of ccfConfig.REMOVED_SETTING_WARNINGS ?? [])
     logger.warn(warning)
-  defaultStore = createIntensityStore(config, ccfConfig.MONGODB, logger)
+  // Rows of one region and period are many: their reads of the store are
+  // remembered for a minute.
+  defaultStore = new RecentReadsStore(
+    createIntensityStore(config, ccfConfig.MONGODB, logger),
+  )
   const sources: GridIntensitySource[] = []
   for (const id of config.SOURCES ?? [STATIC_SOURCE_ID]) {
     // An id is a configured string: only the table's own entries count, so

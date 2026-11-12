@@ -6,7 +6,8 @@
 /*
  * The resolver is called once for every billing row, and nothing is stored
  * for a period a source has no point for. These tests cover the memory that
- * stops such a period being asked for again within the capability TTL.
+ * stops such a period being asked for again: for the capability TTL, or for
+ * an hour when the period ended so recently that it may only be late.
  */
 
 import {
@@ -146,6 +147,7 @@ describe('a period a source has no point for', () => {
 
   it('is remembered for each granularity on its own', async () => {
     // Asked by the day for a day of usage and by the hour for an hour of it.
+    // The source has neither the day nor the hour that starts with it.
     const live = new FakeSource({
       granularities: ['hour', 'day'],
       omit: [DAY_START.toISOString()],
@@ -154,6 +156,15 @@ describe('a period a source has no point for', () => {
     await expect(resolveDay(resolver)).rejects.toMatchObject({
       name: 'NoIntensityAvailableError',
     })
+    // The hour that starts where the day does is still asked for.
+    await expect(
+      resolver.resolve(
+        'AWS',
+        'eu-west-2',
+        DAY_START,
+        utc('2026-03-10T01:00:00.000Z'),
+      ),
+    ).rejects.toMatchObject({ name: 'NoIntensityAvailableError' })
     const hour = await resolver.resolve(
       'AWS',
       'eu-west-2',
@@ -164,9 +175,137 @@ describe('a period a source has no point for', () => {
     await expect(resolveDay(resolver)).rejects.toMatchObject({
       name: 'NoIntensityAvailableError',
     })
-    expect(live.fetchCalls.map((call) => call.granularity)).toEqual([
-      'day',
-      'hour',
+    expect(
+      live.fetchCalls.map((call) => [call.granularity, call.start]),
+    ).toEqual([
+      ['day', DAY_START.toISOString()],
+      ['hour', DAY_START.toISOString()],
+      ['hour', '2026-03-10T13:00:00.000Z'],
     ])
+  })
+
+  it('is forgotten once it has run out, with the failures and warnings that have', async () => {
+    // What the resolver remembers cannot be seen from outside, so this
+    // test looks inside it.
+    const failing = new FakeSource({
+      id: 'failing',
+      granularities: ['hour'],
+      failFetch: true,
+    })
+    const live = new FakeSource({
+      granularities: ['hour'],
+      zones: { 'eu-west-2': 'GB', 'eu-west-1': 'IE' },
+      omit: [GAP],
+    })
+    const { resolver, advanceHours } = createResolver({
+      sources: [failing, live],
+    })
+    const remembered = resolver as unknown as {
+      emptyUntil: Map<string, number>
+      failures: Map<string, unknown>
+      warnedUntil: Map<string, number>
+    }
+    const gapOf = (zoneId: string) => `fake|${zoneId}|hour|${Date.parse(GAP)}`
+    await resolveDay(resolver)
+    expect([...remembered.emptyUntil.keys()]).toEqual([gapOf('GB')])
+    expect([...remembered.failures.keys()]).toEqual(['failing|GB'])
+    expect([...remembered.warnedUntil.keys()]).toEqual(['failure|failing|GB'])
+
+    // Within the TTL nothing is forgotten. The other zone has the same gap.
+    advanceHours(23)
+    await resolver.resolve('AWS', 'eu-west-1', DAY_START, DAY_END)
+    expect([...remembered.emptyUntil.keys()]).toEqual([
+      gapOf('GB'),
+      gapOf('IE'),
+    ])
+    expect(remembered.failures.size).toBe(1)
+    expect(remembered.warnedUntil.size).toBe(1)
+
+    // After it, the next call clears what has run out and keeps the rest.
+    advanceHours(2)
+    await resolver.resolve('AWS', 'eu-west-1', DAY_START, DAY_END)
+    expect([...remembered.emptyUntil.keys()]).toEqual([gapOf('IE')])
+    expect(remembered.failures.size).toBe(0)
+    expect(remembered.warnedUntil.size).toBe(0)
+  })
+})
+
+describe('a period that ended within the last TTL and has no point', () => {
+  // The clock of these tests starts at 2026-11-05T12:00Z, and the TTL is
+  // 24 hours: an hour that ended after noon on 4 November may only be late.
+  const YESTERDAY_START = utc('2026-11-04T00:00:00.000Z')
+  const YESTERDAY_END = utc('2026-11-05T00:00:00.000Z')
+  const OLD_GAP = '2026-11-04T05:00:00.000Z'
+  const LATE = '2026-11-04T22:00:00.000Z'
+  const resolveYesterday = (resolver: IntensityResolver) =>
+    resolver.resolve('AWS', 'eu-west-2', YESTERDAY_START, YESTERDAY_END)
+
+  it('is asked for again after an hour, and an older gap of the same day is not', async () => {
+    const live = new FakeSource({
+      granularities: ['hour'],
+      latest: utc('2026-11-05T10:00:00.000Z'),
+      omit: [OLD_GAP, LATE],
+    })
+    const { resolver, advanceHours } = createResolver({ sources: [live] })
+    const first = await resolveYesterday(resolver)
+    expect(first.points).toHaveLength(22)
+
+    advanceHours(0.9)
+    await resolveYesterday(resolver)
+    expect(live.fetchCalls).toHaveLength(1)
+
+    // The hour is still missing after an hour: it is asked for, the older
+    // gap is not.
+    advanceHours(0.2)
+    await resolveYesterday(resolver)
+    expect(live.fetchCalls.slice(1)).toEqual([
+      {
+        zoneId: 'GB',
+        start: LATE,
+        end: '2026-11-04T23:00:00.000Z',
+        granularity: 'hour',
+      },
+    ])
+
+    // An hour later the source has it.
+    live.omit = [OLD_GAP]
+    advanceHours(1.1)
+    const later = await resolveYesterday(resolver)
+    expect(live.fetchCalls).toHaveLength(3)
+    expect(live.fetchCalls[2].start).toBe(LATE)
+    expect(later.points).toHaveLength(23)
+  })
+
+  it('is asked for again after the TTL when the TTL is shorter than an hour', async () => {
+    const live = new FakeSource({
+      granularities: ['hour'],
+      latest: utc('2026-11-05T10:00:00.000Z'),
+    })
+    const NINE = '2026-11-05T09:00:00.000Z'
+    live.omit = [NINE]
+    const { resolver, advanceHours } = createResolver({
+      sources: [live],
+      capabilityTtlHours: 0.5,
+    })
+    const resolveNine = () =>
+      resolver.resolve(
+        'AWS',
+        'eu-west-2',
+        utc(NINE),
+        utc('2026-11-05T10:00:00.000Z'),
+      )
+    await expect(resolveNine()).rejects.toMatchObject({
+      name: 'NoIntensityAvailableError',
+    })
+    advanceHours(0.4)
+    await expect(resolveNine()).rejects.toMatchObject({
+      name: 'NoIntensityAvailableError',
+    })
+    expect(live.fetchCalls).toHaveLength(1)
+    advanceHours(0.2)
+    await expect(resolveNine()).rejects.toMatchObject({
+      name: 'NoIntensityAvailableError',
+    })
+    expect(live.fetchCalls).toHaveLength(2)
   })
 })

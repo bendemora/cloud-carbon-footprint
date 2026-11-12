@@ -36,6 +36,12 @@ export interface FakeSourceOptions {
   omit?: string[]
   /** whether the point for a period is preliminary; default none is */
   preliminary?: (periodStart: Date) => boolean
+  /**
+   * Called when a fetch has been recorded and before it answers. A test
+   * returns a promise to hold the answer back, or throws to make the fetch
+   * fail with an error of its own.
+   */
+  beforeAnswer?: (call: FetchCall) => Promise<void> | void
 }
 
 export interface FetchCall {
@@ -106,12 +112,14 @@ export class FakeSource implements GridIntensitySource {
     end: Date,
     granularity: Granularity,
   ): Promise<IntensityPoint[]> {
-    this.fetchCalls.push({
+    const call: FetchCall = {
       zoneId,
       start: start.toISOString(),
       end: end.toISOString(),
       granularity,
-    })
+    }
+    this.fetchCalls.push(call)
+    await this.options.beforeAnswer?.(call)
     if (this.failFetch) throw new Error('401 Unauthorized')
     const value = this.options.value ?? (() => 100)
     const omit = new Set(this.omit)

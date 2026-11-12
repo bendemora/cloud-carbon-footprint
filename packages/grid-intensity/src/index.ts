@@ -70,6 +70,9 @@ export {
   MongoDbIntensityStore,
 } from './stores/MongoDbIntensityStore'
 export { createIntensityStore } from './stores/createIntensityStore'
+export { RECENT_READ_MS, RecentReadsStore } from './stores/RecentReadsStore'
+export { PartialFetchError, partialPointsOf } from './PartialFetchError'
+export { MAX_G_CO2E_PER_KWH } from './dataQuality'
 export type {
   CapabilityReporterInput,
   EmissionsFactorsResolution,

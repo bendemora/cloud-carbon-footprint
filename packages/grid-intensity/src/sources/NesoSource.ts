@@ -4,6 +4,8 @@
  */
 
 import { version } from '../../package.json'
+import { MAX_G_CO2E_PER_KWH } from '../dataQuality'
+import { PartialFetchError } from '../PartialFetchError'
 import { gridZoneOf } from '../registry/gridZones'
 import {
   CloudProvider,
@@ -114,6 +116,11 @@ interface Answer {
  * corrected for losses) with direct CO2 factors. They are grams of CO2 per
  * kWh, not CO2e, although the field that carries them is named gCO2ePerKWh.
  *
+ * An answer whose periods are all in a form the source does not know is a
+ * failure, not an empty answer: a change of NESO's format then shows as a
+ * warning and in the doctor, and not as a silent return to the static
+ * factors.
+ *
  * The source keeps no data between calls: the resolver stores the points
  * and remembers failures. It does keep its requests in line: they go out
  * one at a time, NESO_MIN_REQUEST_INTERVAL_MS apart, whichever call they
@@ -153,19 +160,23 @@ export class NesoSource implements GridIntensitySource {
   }
 
   /**
-   * Asks for one half hour, the latest. Only the shape of the answer is
-   * looked at: the spike found the values of this endpoint unreliable
-   * (section 4.5). The API has no authentication, so `authenticated` follows
-   * `reachable`.
+   * Asks for one half hour, the latest. Only the form of the answer is
+   * looked at, which is the form fetch() reads: the spike found the values
+   * of this endpoint unreliable (section 4.5). The API has no
+   * authentication, so `authenticated` follows `reachable`.
    */
   async probe(): Promise<SourceStatus> {
     try {
       const { path, status, body } = await this.request(PROBE_PATH)
-      if (isObject(body) && 'data' in body)
-        return { reachable: true, authenticated: true }
-      return unreachable(
-        failure(path, `HTTP ${status} with a body that has no data`),
-      )
+      const unexpected = (what: string): SourceStatus =>
+        unreachable(failure(path, `HTTP ${status} with ${what}`))
+      if (!isObject(body) || !('data' in body))
+        return unexpected('a body that has no data')
+      if (!Array.isArray(body.data))
+        return unexpected('data that is not a list')
+      if (body.data.some((entry) => halfHourOf(entry) === undefined))
+        return unexpected('a period that is not in the expected form')
+      return { reachable: true, authenticated: true }
     } catch (error) {
       return unreachable(error)
     }
@@ -198,7 +209,8 @@ export class NesoSource implements GridIntensitySource {
    * One point for each whole UTC hour in [start, end) whose two half hours
    * both have an actual value. The resolver asks for whole hours. A range of
    * more than NESO_MAX_RANGE_DAYS is read in consecutive requests, one after
-   * another.
+   * another. When a request after the first fails, the error carries the
+   * points of the part that was read (PartialFetchError).
    */
   async fetch(
     zoneId: string,
@@ -220,59 +232,76 @@ export class NesoSource implements GridIntensitySource {
     const retrievedAt = this.now()
     /** The actual value of each half hour that has one, by its start. */
     const actuals = new Map<number, number>()
-    for (let from = startMs; from < endMs; from += MAX_RANGE_MS) {
-      const to = Math.min(from + MAX_RANGE_MS, endMs)
-      const answer = await this.request(
-        `/intensity/${formatDatetime(from)}/${formatDatetime(to)}`,
-      )
-      for (const entry of entriesOf(answer)) {
-        const halfHour = halfHourOf(entry)
-        if (halfHour) actuals.set(halfHour.from, halfHour.actual)
+
+    // Only the two half hours of each whole UTC hour inside the range are
+    // looked up, so nothing outside it is used. That leaves out the extra
+    // half hour the API returns, the one that ends where a request starts,
+    // and any period that does not start at minute 0 or 30.
+    const pointsBefore = (untilMs: number): IntensityPoint[] => {
+      const points: IntensityPoint[] = []
+      const firstHour = Math.ceil(startMs / HOUR_MS) * HOUR_MS
+      for (let hour = firstHour; hour + HOUR_MS <= untilMs; hour += HOUR_MS) {
+        const first = actuals.get(hour)
+        const second = actuals.get(hour + HALF_HOUR_MS)
+        // An hour with a missing half is left out, never filled from the
+        // forecast: the store keeps a point for good, so a stored forecast
+        // would not be replaced by the actual (spike section 8.2, point 6).
+        if (first === undefined || second === undefined) continue
+        points.push({
+          zoneId,
+          periodStart: new Date(hour),
+          periodEnd: new Date(hour + HOUR_MS),
+          granularity: GRANULARITY,
+          // The halves are equal in length, so the plain mean is
+          // time-weighted.
+          gCO2ePerKWh: (first + second) / 2,
+          basis: 'location-consumption',
+          factorType: 'direct',
+          isEstimated: false,
+          sourceId: this.id,
+          retrievedAt,
+        })
       }
+      return points
     }
 
-    // Only the two half hours of each whole UTC hour inside [start, end) are
-    // looked up, so nothing outside the range is used. That leaves out the
-    // extra half hour the API returns, the one that ends where a request
-    // starts, and any period that does not start at minute 0 or 30.
-    const points: IntensityPoint[] = []
-    const firstHour = Math.ceil(startMs / HOUR_MS) * HOUR_MS
-    for (let hour = firstHour; hour + HOUR_MS <= endMs; hour += HOUR_MS) {
-      const first = actuals.get(hour)
-      const second = actuals.get(hour + HALF_HOUR_MS)
-      // An hour with a missing half is left out, never filled from the
-      // forecast: the store keeps a point for good, so a stored forecast
-      // would not be replaced by the actual (spike section 8.2, point 6).
-      if (first === undefined || second === undefined) continue
-      points.push({
-        zoneId,
-        periodStart: new Date(hour),
-        periodEnd: new Date(hour + HOUR_MS),
-        granularity: GRANULARITY,
-        // The halves are equal in length, so the plain mean is time-weighted.
-        gCO2ePerKWh: (first + second) / 2,
-        basis: 'location-consumption',
-        factorType: 'direct',
-        isEstimated: false,
-        sourceId: this.id,
-        retrievedAt,
-      })
+    for (let from = startMs; from < endMs; from += MAX_RANGE_MS) {
+      const to = Math.min(from + MAX_RANGE_MS, endMs)
+      try {
+        const answer = await this.request(
+          `/intensity/${formatDatetime(from)}/${formatDatetime(to)}`,
+        )
+        for (const { from: halfHour, actual } of halfHoursOf(answer))
+          if (actual !== null) actuals.set(halfHour, actual)
+      } catch (error) {
+        // What the requests before this one gave is not thrown away.
+        const read = pointsBefore(from)
+        if (!read.length) throw error
+        throw new PartialFetchError(textOf(error), read, { cause: error })
+      }
     }
-    return points
+    return pointsBefore(endMs)
   }
 
   /**
    * GET a path of the API and parse the answer. Throws when the request
    * fails or is not answered in time, when the status is not 2xx, when the
    * body is not JSON, and when the body carries an `error` property, which
-   * the API also sends with HTTP 200 (spike section 4.8).
+   * the API also sends with HTTP 200 (spike section 4.8). The message of a
+   * body that is { message } and no error object is shown as well: the API
+   * is served through a gateway (spike section 3), and that such a gateway
+   * answers in that form when it refuses a request itself is inferred. No
+   * such answer was recorded.
    */
   private async request(path: string): Promise<Answer> {
     const { ok, status, text } = await this.send(path)
     const body = parseJson(text)
     if (isObject(body) && 'error' in body)
       throw failure(path, `HTTP ${status}: ${errorMessageOf(body.error)}`)
-    if (!ok) throw failure(path, `HTTP ${status}`)
+    // A gateway in front of the API answers { message } and no error object.
+    const said = messageOf(body)
+    if (!ok)
+      throw failure(path, said ? `HTTP ${status}: ${said}` : `HTTP ${status}`)
     if (body === NOT_JSON)
       throw failure(path, `HTTP ${status} with a body that is not JSON`)
     return { path, status, body }
@@ -286,8 +315,12 @@ export class NesoSource implements GridIntensitySource {
     path: string,
   ): Promise<{ ok: boolean; status: number; text: string }> {
     const answer = this.lastInLine.then(async () => {
-      const wait =
-        this.lastRequestAt + this.minRequestIntervalMs - this.now().getTime()
+      // Never longer than the interval: a clock that was set back since the
+      // last request must not hold the next one up for the size of the step.
+      const wait = Math.min(
+        this.minRequestIntervalMs,
+        this.lastRequestAt + this.minRequestIntervalMs - this.now().getTime(),
+      )
       if (wait > 0) await this.sleep(wait)
       this.lastRequestAt = this.now().getTime()
       return this.sendNow(path)
@@ -358,8 +391,23 @@ const unreachable = (thrown: unknown): SourceStatus => ({
 const reasonOf = (error: unknown): string => {
   if (isObject(error) && error.name === 'TimeoutError')
     return `no answer within ${NESO_TIMEOUT_MS / 1000} seconds`
-  const cause = isObject(error) ? messageOf(error.cause) : undefined
+  const cause = isObject(error) ? causeOf(error.cause) : ''
   return cause ? `${textOf(error)}: ${cause}` : textOf(error)
+}
+
+/**
+ * What a cause says. When a host has several addresses and none can be
+ * reached, the cause is an AggregateError with an empty message, a code and
+ * one error for each address.
+ */
+const causeOf = (cause: unknown): string => {
+  const message = messageOf(cause)
+  if (message || !isObject(cause)) return message ?? ''
+  const attempts = Array.isArray(cause.errors)
+    ? cause.errors.map(messageOf).filter(Boolean)
+    : []
+  const code = typeof cause.code === 'string' ? cause.code : ''
+  return [code, attempts.join('; ')].filter(Boolean).join(': ')
 }
 
 /** The message of the API's error object: { code, message }. */
@@ -391,22 +439,50 @@ const DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?Z$/
 const parseDatetime = (value: unknown): number =>
   typeof value === 'string' && DATETIME.test(value) ? Date.parse(value) : NaN
 
+/** A half hour of an answer: its start, and its actual value if it has a usable one. */
+interface HalfHour {
+  from: number
+  actual: number | null
+}
+
 /**
- * The start of the half hour an entry of `data` describes and its actual
- * value, or null when the entry gives none. Every period the spike saw is 30
- * minutes long, and one of any other length is ignored. A missing actual is
- * null in the API's answers. A 0 is treated as missing too: the one found in
- * the spike was an artefact, and a real zero is not possible while gas and
- * biomass run (spike section 4.7).
+ * The half hour an entry of `data` describes, or undefined when the entry
+ * is not in the form the spike recorded: an object with `from` and `to` 30
+ * minutes apart and an `intensity` whose `actual` is a number or null.
+ * Every period the spike saw is 30 minutes long.
+ *
+ * A missing actual is null in the API's answers. A value of 0 or less
+ * counts as missing too: the one 0 found in the spike is taken to be an
+ * artefact, and a real zero is not possible while gas and biomass run
+ * (spike section 4.7). So does a value above the data quality bound, which
+ * would otherwise pass when the hour's other half is low.
  */
-const halfHourOf = (
-  entry: unknown,
-): { from: number; actual: number } | null => {
-  if (!isObject(entry) || !isObject(entry.intensity)) return null
+const halfHourOf = (entry: unknown): HalfHour | undefined => {
+  if (!isObject(entry) || !isObject(entry.intensity)) return undefined
   const from = parseDatetime(entry.from)
-  if (parseDatetime(entry.to) - from !== HALF_HOUR_MS) return null
+  if (parseDatetime(entry.to) - from !== HALF_HOUR_MS) return undefined
   const { actual } = entry.intensity
-  return typeof actual === 'number' && Number.isFinite(actual) && actual > 0
-    ? { from, actual }
-    : null
+  if (actual === null) return { from, actual: null }
+  if (typeof actual !== 'number' || !Number.isFinite(actual)) return undefined
+  const usable = actual > 0 && actual <= MAX_G_CO2E_PER_KWH
+  return { from, actual: usable ? actual : null }
+}
+
+/**
+ * The half hours of a range answer that are in the expected form. The others
+ * are left out, which leaves their hours out. An answer with periods of
+ * which none is in that form is a failure: the format has changed, and the
+ * hours are not missing.
+ */
+const halfHoursOf = (answer: Answer): HalfHour[] => {
+  const entries = entriesOf(answer)
+  const halfHours = entries
+    .map(halfHourOf)
+    .filter((halfHour): halfHour is HalfHour => halfHour !== undefined)
+  if (entries.length && !halfHours.length)
+    throw failure(
+      answer.path,
+      `HTTP ${answer.status} with ${entries.length} period${entries.length === 1 ? '' : 's'}, none of them in the expected form`,
+    )
+  return halfHours
 }

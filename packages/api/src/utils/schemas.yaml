@@ -77,7 +77,7 @@ components:
                     enum: [A, B, C, D]
                   gCO2ePerKWh:
                     type: number
-                    description: Grid intensity applied to the row, in gCO2e/kWh. kilowattHours includes embodied emissions converted at this factor, so for a row with a co2e value, co2e (tonnes) is kilowattHours times this value divided by 1,000,000. On a row merged from parts with different provenance (isEstimated is then true) it is the mean of the parts' intensities weighted by their operationalKilowattHours, and that relation with kilowattHours does not hold.
+                    description: Grid intensity applied to the row, in gCO2e/kWh. kilowattHours includes embodied emissions converted at this factor, so for a row with a co2e value, co2e (tonnes) is kilowattHours times this value divided by 1,000,000. On a row merged from parts with different provenance (isEstimated is then true) it is the mean of the parts' intensities weighted by their operationalKilowattHours, and that relation with kilowattHours does not hold. For a row whose sourceId is neso the value is gCO2/kWh and not gCO2e/kWh, because the factors of that source are direct CO2 only. No field marks the difference.
                   modelVersion:
                     type: string
                   calibrationVersion:

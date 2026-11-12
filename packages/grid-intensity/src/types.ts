@@ -121,6 +121,15 @@ export interface GridIntensitySource {
   capabilities(zoneId: string): Promise<ZoneCapability | null>
   /** The source's zone for a cloud region, or null when it has none. */
   mapRegion(provider: CloudProvider, region: string): string | null
+  /**
+   * The points of the range, or fewer when the source does not have them
+   * all. It throws when it cannot say: the resolver then stops asking for
+   * the zone for the capability TTL. A source that read part of the range
+   * before it failed throws a PartialFetchError with the points it read,
+   * and the resolver keeps them. An answer in a form the source does not
+   * know is a failure and not an empty list, so that a change of format
+   * does not pass for missing data.
+   */
   fetch(
     zoneId: string,
     start: Date,

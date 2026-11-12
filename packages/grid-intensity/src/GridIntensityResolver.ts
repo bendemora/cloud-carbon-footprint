@@ -4,6 +4,7 @@
  */
 
 import { missingPeriods, timeWeightedMean } from './coverage'
+import { MAX_G_CO2E_PER_KWH } from './dataQuality'
 import {
   addPeriod,
   coarsestWithin,
@@ -15,6 +16,7 @@ import {
   usageGranularityOf,
 } from './granularity'
 import { requiresAcknowledgement } from './licence'
+import { partialPointsOf } from './PartialFetchError'
 import { deriveQualityTier } from './qualityTier'
 import { InMemoryIntensityStore } from './stores/InMemoryIntensityStore'
 import {
@@ -43,10 +45,11 @@ export interface GridIntensityResolverOptions {
   /** Source ids the operator asserts they are licensed to use. */
   licenceAcknowledgements?: string[]
   /**
-   * How long capability answers, failures and warnings are kept, and the
-   * longest that session-retention points and preliminary points are held
-   * (they are released together, by the first resolve call after it).
-   * Default 24.
+   * How long capability answers, failures and warnings are kept, how long a
+   * period a source had no data for is not asked for again, and the longest
+   * that session-retention points and preliminary points are held (they are
+   * released together, by the first resolve call after it). Two questions
+   * are asked again sooner, after an hour: see RECHECK_MS. Default 24.
    */
   capabilityTtlHours?: number
   /** CCF energy model version stamped on provenance. Default 'unversioned'. */
@@ -88,17 +91,18 @@ export class NoIntensityAvailableError extends Error {
   }
 }
 
-/** Data quality bounds for fetched points (design section 13). */
-const MAX_G_CO2E_PER_KWH = 1500
 const HOUR_MS = 60 * 60 * 1000
 /**
- * How old an answer about the end of a source's data may be before the
- * resolver asks again, for a usage period that runs past that end. The end
- * of live data moves with the clock, and the capability TTL (24 hours by
- * default) is too long for it: a server that asked yesterday morning would
- * go on serving yesterday from the hours the source had then.
+ * How long the resolver waits before it asks a live source again about
+ * something that moves with the clock, for which the capability TTL (24
+ * hours by default) is too long:
+ * - the end of the source's data, for a usage period that runs past it. A
+ *   server that asked yesterday morning would otherwise go on serving
+ *   yesterday from the hours the source had then.
+ * - a period the source had no data for that ended within the last TTL. It
+ *   may only be late.
  */
-const END_OF_DATA_RECHECK_MS = HOUR_MS
+const RECHECK_MS = HOUR_MS
 
 interface CachedCapability {
   capability: ZoneCapability | null
@@ -116,6 +120,27 @@ interface Resolution {
   resolved: ResolvedIntensity
   /** Covered fraction of the usage period, 0 to 1. */
   coverage: number
+}
+
+/** One series of a source: what a usage period is read and fetched from. */
+interface Series {
+  candidate: Candidate
+  granularity: Granularity
+  /** Source, zone and granularity. */
+  seriesRef: string
+  /** The configured store, or the session for session-retention licences. */
+  store: IntensityStore
+}
+
+/** What is on hand for a usage period, and what there is to fetch. */
+interface Known {
+  stored: IntensityPoint[]
+  /** Preliminary points fetched earlier in the TTL (ADR 0025). */
+  held: IntensityPoint[]
+  /** The store could not be read. */
+  storeUnread: boolean
+  /** The ranges to ask the source for. */
+  missing: Period[]
 }
 
 /** What one source gave for a usage period. */
@@ -174,8 +199,9 @@ const marked = (
  *
  * Stored points are read before a source's lookback window or a recent
  * failure is considered: those limit what is fetched, not what is used.
- * A period a source had no usable point for is not asked for again within
- * the capability TTL.
+ * A period a source had no usable point for is not asked for again for the
+ * capability TTL, or for an hour when it may only be late (rememberEmpty).
+ * Calls that overlap take turns to fetch for a zone of a source (resolveAt).
  * A source that covers only part of the period is kept as a fallback while
  * later sources are tried. Failures stop a zone's fetches for the
  * capability TTL. Each warning is logged at most once per source, zone and
@@ -216,6 +242,13 @@ export class GridIntensityResolver implements IntensityResolver {
   private readonly emptyUntil = new Map<string, number>()
   /** Stand-ins for capabilities that could not be probed (see capability()). */
   private readonly unprobed = new WeakSet<ZoneCapability>()
+  /**
+   * The line of each zone of a source: settles when its last fetch and
+   * store cycle has ended. See resolveAt.
+   */
+  private readonly turns = new Map<string, Promise<void>>()
+  /** How many fetch and store cycles of each zone have ended. */
+  private readonly cyclesEnded = new Map<string, number>()
   /**
    * Points of session-retention sources, and preliminary points of every
    * source: never in the configured store, and released by the first
@@ -442,13 +475,25 @@ export class GridIntensityResolver implements IntensityResolver {
       !this.endOfDataIsStale(cached, zoneRef, neededUntil, nowMs)
     )
       return cached.capability
+    // Asked before the TTL is up, about the end of the data only: when that
+    // goes wrong the answer in hand stands, and the zone is not stopped.
+    const early = cached !== undefined && cached.expiresAt > nowMs
     let capability: ZoneCapability | null
     try {
       capability = await source.capabilities(zoneId)
     } catch (error) {
+      if (early)
+        return this.earlierAnswer(source, zoneId, cached, messageOf(error))
       capability = cached?.capability ?? this.standIn(source, zoneId)
       this.fail(source, zoneId, 'capability probe', error)
     }
+    if (early && capability === null)
+      return this.earlierAnswer(
+        source,
+        zoneId,
+        cached,
+        'it gave no answer for the zone',
+      )
     this.capabilityCache.set(zoneRef, {
       capability,
       askedAt: nowMs,
@@ -474,9 +519,28 @@ export class GridIntensityResolver implements IntensityResolver {
     return (
       latest !== undefined &&
       neededUntil > latest &&
-      nowMs - cached.askedAt >= END_OF_DATA_RECHECK_MS &&
+      nowMs - cached.askedAt >= RECHECK_MS &&
       !(failure && failure.until > nowMs)
     )
+  }
+
+  /**
+   * The answer in hand, after a question about the end of the data went
+   * wrong. The question is not repeated for RECHECK_MS, and the answer is
+   * asked for afresh when its TTL is up.
+   */
+  private earlierAnswer(
+    source: GridIntensitySource,
+    zoneId: string,
+    cached: CachedCapability,
+    reason: string,
+  ): ZoneCapability | null {
+    cached.askedAt = this.now().getTime()
+    this.warnOnce(
+      `recheck|${source.id}|${zoneId}`,
+      `Grid intensity source ${source.id} could not say how far its data for zone ${zoneId} reaches now: ${reason}. Its earlier answer is used.`,
+    )
+    return cached.capability
   }
 
   private standIn(source: GridIntensitySource, zoneId: string): ZoneCapability {
@@ -518,77 +582,43 @@ export class GridIntensityResolver implements IntensityResolver {
     return this.resolveAt(candidate, granularity, start, end, usageGranularity)
   }
 
+  /**
+   * Calls overlap: the provider packages resolve the rows of several
+   * accounts, and every recommendation, at once, and the API serves
+   * overlapping requests. So a call that has something to fetch waits in
+   * the line of its zone, and when a cycle of the zone has ended since it
+   * looked, it looks again: it then finds what that cycle stored, or the
+   * failure or the empty answer it met, and does not send the same request
+   * again. The line is the zone's, as the failure memory is, so that calls
+   * for different periods or granularities meet one failure and not one
+   * each. A call with nothing to fetch does not wait.
+   */
   private async resolveAt(
-    { source, zoneId, capability }: Candidate,
+    candidate: Candidate,
     granularity: Granularity,
     start: Date,
     end: Date,
     usageGranularity: Granularity,
   ): Promise<Attempt> {
-    const persist = source.persist !== false
+    const { source, zoneId, capability } = candidate
+    const seriesRef = `${source.id}|${zoneId}|${granularity}`
     const store =
       capability.licence.retention === 'session' ? this.session : this.store
-    const read = persist
-      ? await this.storedPoints(
-          store,
-          source.id,
-          zoneId,
-          start,
-          end,
-          granularity,
-        )
-      : []
-    const storeUnread = read === null
-    const stored = read ?? []
-    // Preliminary points fetched earlier in the TTL (ADR 0025).
-    const held =
-      persist && store !== this.session
-        ? await this.session.get(source.id, zoneId, start, end, granularity)
-        : []
-    const fetched: IntensityPoint[] = []
-    const seriesRef = `${source.id}|${zoneId}|${granularity}`
-    const fetchable = this.failureOf(source.id, zoneId)
-      ? []
-      : periodsCovering(start, end, granularity).filter(
-          (period) =>
-            isWithinWindow(period, capability) &&
-            !this.knownEmpty(seriesRef, period),
-        )
-    for (const range of missingPeriods(fetchable, [...held, ...stored])) {
-      try {
-        const points = await source.fetch(
-          zoneId,
-          range.start,
-          range.end,
-          granularity,
-        )
-        const usable = this.usablePoints(source, zoneId, granularity, points)
-        fetched.push(...usable)
-        this.rememberEmpty(
-          seriesRef,
-          missingPeriods(
-            periodsCovering(range.start, range.end, granularity),
-            usable,
-          ),
-          granularity,
-        )
-      } catch (error) {
-        this.fail(source, zoneId, 'fetch', error)
-        break
-      }
-    }
-    if (persist) {
-      // A preliminary point is kept in memory for the TTL, so the run does
-      // not ask for it again, and never reaches the configured store: a
-      // later run then fetches the settled value (ADR 0025).
-      const storable = (point: IntensityPoint): boolean =>
-        store === this.session || !point.isPreliminary
-      const settled = fetched.filter(storable)
-      const preliminary = fetched.filter((point) => !storable(point))
-      if (settled.length)
-        await this.storePoints(store, source.id, zoneId, settled)
-      if (preliminary.length) await this.session.put(preliminary)
-    }
+    const series: Series = { candidate, granularity, seriesRef, store }
+    const zoneRef = `${source.id}|${zoneId}`
+    const cyclesEnded = this.cyclesEnded.get(zoneRef) ?? 0
+    let known = await this.knownPoints(series, start, end)
+    let fetched: IntensityPoint[] = []
+    if (known.missing.length && source.persist === false)
+      // Values from code are not stored, so there is nothing to wait for.
+      fetched = await this.fetchMissing(series, known.missing)
+    else if (known.missing.length)
+      await this.inTurn(zoneRef, async () => {
+        if ((this.cyclesEnded.get(zoneRef) ?? 0) !== cyclesEnded)
+          known = await this.knownPoints(series, start, end)
+        fetched = await this.fetchMissing(series, known.missing)
+      })
+    const { stored, held, storeUnread } = known
 
     // For one period, in rising order of preference: a held preliminary
     // point, a preliminary point just fetched, a stored point, a settled
@@ -637,6 +667,139 @@ export class GridIntensityResolver implements IntensityResolver {
   }
 
   /**
+   * Runs the fetch and store cycles of one zone of a source one at a time,
+   * in the order they were asked for.
+   */
+  private async inTurn(
+    zoneRef: string,
+    cycle: () => Promise<void>,
+  ): Promise<void> {
+    const turn = (this.turns.get(zoneRef) ?? Promise.resolve()).then(
+      async () => {
+        try {
+          await cycle()
+        } finally {
+          this.cyclesEnded.set(
+            zoneRef,
+            (this.cyclesEnded.get(zoneRef) ?? 0) + 1,
+          )
+        }
+      },
+    )
+    // The line goes on when a cycle throws: only its own caller hears of it.
+    const ended = turn.then(
+      () => undefined,
+      () => undefined,
+    )
+    this.turns.set(zoneRef, ended)
+    try {
+      await turn
+    } finally {
+      if (this.turns.get(zoneRef) === ended) this.turns.delete(zoneRef)
+    }
+  }
+
+  /**
+   * The points on hand for a usage period, and the ranges to ask the source
+   * for: the periods in its window that are neither stored nor held and
+   * that it has not answered empty-handed (see rememberEmpty). There are
+   * none while the zone's fetches are stopped by a failure.
+   */
+  private async knownPoints(
+    { candidate, granularity, seriesRef, store }: Series,
+    start: Date,
+    end: Date,
+  ): Promise<Known> {
+    const { source, zoneId, capability } = candidate
+    const persist = source.persist !== false
+    const read = persist
+      ? await this.storedPoints(
+          store,
+          source.id,
+          zoneId,
+          start,
+          end,
+          granularity,
+        )
+      : []
+    const stored = read ?? []
+    const held =
+      persist && store !== this.session
+        ? await this.session.get(source.id, zoneId, start, end, granularity)
+        : []
+    const fetchable = this.failureOf(source.id, zoneId)
+      ? []
+      : periodsCovering(start, end, granularity).filter(
+          (period) =>
+            isWithinWindow(period, capability) &&
+            !this.knownEmpty(seriesRef, period),
+        )
+    return {
+      stored,
+      held,
+      storeUnread: read === null,
+      missing: missingPeriods(fetchable, [...held, ...stored]),
+    }
+  }
+
+  /**
+   * Asks the source for the ranges and stores what it gives. A range that
+   * fails stops the zone's fetches; the points a source read before it
+   * failed (PartialFetchError) are kept.
+   */
+  private async fetchMissing(
+    { candidate, granularity, seriesRef, store }: Series,
+    missing: Period[],
+  ): Promise<IntensityPoint[]> {
+    const { source, zoneId } = candidate
+    const fetched: IntensityPoint[] = []
+    for (const range of missing) {
+      try {
+        const points = await source.fetch(
+          zoneId,
+          range.start,
+          range.end,
+          granularity,
+        )
+        const usable = this.usablePoints(source, zoneId, granularity, points)
+        fetched.push(...usable)
+        this.rememberEmpty(
+          seriesRef,
+          missingPeriods(
+            periodsCovering(range.start, range.end, granularity),
+            usable,
+          ),
+          granularity,
+        )
+      } catch (error) {
+        fetched.push(
+          ...this.usablePoints(
+            source,
+            zoneId,
+            granularity,
+            partialPointsOf(error),
+          ),
+        )
+        this.fail(source, zoneId, 'fetch', error)
+        break
+      }
+    }
+    if (source.persist !== false) {
+      // A preliminary point is kept in memory for the TTL, so the run does
+      // not ask for it again, and never reaches the configured store: a
+      // later run then fetches the settled value (ADR 0025).
+      const storable = (point: IntensityPoint): boolean =>
+        store === this.session || !point.isPreliminary
+      const settled = fetched.filter(storable)
+      const preliminary = fetched.filter((point) => !storable(point))
+      if (settled.length)
+        await this.storePoints(store, source.id, zoneId, settled)
+      if (preliminary.length) await this.session.put(preliminary)
+    }
+    return fetched
+  }
+
+  /**
    * Drops points that are not whole UTC periods of the requested
    * granularity for this source and zone, so points cannot overlap and the
    * coverage cannot read 1 over a gap. The 0 to 1500 gCO2e/kWh bounds apply
@@ -679,7 +842,7 @@ export class GridIntensityResolver implements IntensityResolver {
     return valid
   }
 
-  /** Whether the source gave nothing for the period within the TTL. */
+  /** Whether the source gave nothing for the period a short while ago. */
   private knownEmpty(seriesRef: string, period: Period): boolean {
     const id = `${seriesRef}|${period.start.getTime()}`
     const until = this.emptyUntil.get(id)
@@ -689,16 +852,26 @@ export class GridIntensityResolver implements IntensityResolver {
     return false
   }
 
-  /** Notes each period of the ranges as asked for and not served. */
+  /**
+   * Notes each period of the ranges as asked for and not served. A period
+   * that ended within the last TTL may only be late, so it is asked for
+   * again after RECHECK_MS; an older one after the TTL.
+   */
   private rememberEmpty(
     seriesRef: string,
     ranges: Period[],
     granularity: Granularity,
   ): void {
-    const until = this.now().getTime() + this.ttlMs
+    const nowMs = this.now().getTime()
+    const mayBeLate = (period: Period): boolean =>
+      period.end.getTime() > nowMs - this.ttlMs
     for (const range of ranges)
       for (const period of periodsCovering(range.start, range.end, granularity))
-        this.emptyUntil.set(`${seriesRef}|${period.start.getTime()}`, until)
+        this.emptyUntil.set(
+          `${seriesRef}|${period.start.getTime()}`,
+          nowMs +
+            (mayBeLate(period) ? Math.min(RECHECK_MS, this.ttlMs) : this.ttlMs),
+        )
   }
 
   private warnDropped(id: string, dropped: number, rest: string): void {
@@ -709,12 +882,24 @@ export class GridIntensityResolver implements IntensityResolver {
       )
   }
 
-  /** Run at the start of every resolve call, whichever sources it uses. */
+  /**
+   * Run at the start of every resolve call, whichever sources it uses.
+   * Once per TTL it releases the session points and forgets the empty
+   * answers, failures and warnings that have run out, so that a process
+   * that runs for long does not keep one entry for every period it was
+   * ever asked for.
+   */
   private expireSession(): void {
     const nowMs = this.now().getTime()
     if (nowMs < this.sessionExpiresAt) return
     this.session = new InMemoryIntensityStore()
     this.sessionExpiresAt = nowMs + this.ttlMs
+    for (const [id, until] of this.emptyUntil)
+      if (until <= nowMs) this.emptyUntil.delete(id)
+    for (const [id, until] of this.warnedUntil)
+      if (until <= nowMs) this.warnedUntil.delete(id)
+    for (const [id, failure] of this.failures)
+      if (failure.until <= nowMs) this.failures.delete(id)
   }
 
   /** The failure that has stopped the zone's fetches, within the TTL. */
