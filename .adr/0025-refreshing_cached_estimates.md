@@ -4,7 +4,7 @@ Date: 2026-11-10
 
 ## Status
 
-Proposed
+Accepted with the merge of pull request #32, which builds the marker (point 1 of the decision). Design section 12 put the marker before the first live source. Replace and refresh (points 2 and 3) are not built yet. The implementation notes at the end record what was built.
 
 ## Decision
 
@@ -36,13 +36,13 @@ Verified in the code on 2026-11-10 (trunk `a42b5ac6`):
 
 Why this needs deciding now:
 
-- The resolver falls back when a source fails (design section 6.2) and estimates from partial data when a period is not fully published (the implementation notes under 6.2). Both are right for the run. With a cache that never looks again, one outage or one early run fixes tier C or D rows for good. Design section 6.1 notes this for the Electricity Maps v4 source. It applies to every live source, starting with the first one in Phase 2. The legacy v3 path avoids it only by stopping the run.
+- The resolver falls back when a source fails (design section 6.2) and estimates from partial data when a period is not fully published (the implementation notes under 6.2). Both are right for the run. With a cache that never looks again, one outage or one early run fixes tier C or D rows for good. It applies to every live source, starting with the first one in Phase 2. The Electricity Maps lookup the fork inherited avoided it only by stopping the run, and ADR 0026 has since removed that lookup.
 - The same holds when the configuration improves. Adding a source, a credential or a licence acknowledgement does not touch periods that are already cached.
 - How soon each open source publishes settled values is not verified yet (design section 14).
 
 Alternatives considered:
 
-- Stop the run when a source fails, as the v3 path does. It protects the cache from failures only, gives up the availability rule in section 6.2, and does nothing for late data or a changed configuration.
+- Stop the run when a source fails, as the Electricity Maps lookup did until ADR 0026 removed it. It protects the cache from failures only, gives up the availability rule in section 6.2, and does nothing for late data or a changed configuration.
 - Do not cache a period that holds provisional rows. Every request would then read the billing data for those periods again. While a failure is remembered for the capability TTL (24 hours by default), each of those reads would end in the same fallback.
 - Refresh on read, inside the decorator. A read would become slow and costly at times the caller cannot predict, because billing queries cost money on Athena and BigQuery. It can be added behind a setting once the explicit refresh has proved itself.
 - Cache energy only and apply the intensity when rows are read. It removes the problem at its root, but it changes every reader of the cache, the MongoDB paging and the cost of a read, which is more than this programme should take on. Re-pricing from stored fields gets most of the benefit.
@@ -56,3 +56,21 @@ Alternatives considered:
 - An operator who never runs the refresh keeps provisional rows. They are labelled in the API and the export, and the doctor reports their number, so the gap is visible.
 - Re-pricing, once ADR 0024 is in place, is exact for known usage. It is approximate for unknown-usage rows on AWS and Azure, whose inherited embodied share was priced at the first intensity. A refresh from billing data is exact for both.
 - Hourly grouping (Phase 3) multiplies the number of periods. The refresh works on date ranges, so its shape does not change, but finding provisional periods in MongoDB then needs an index.
+
+## Implementation notes
+
+### The marker (2026-11-12)
+
+- `Provenance.isProvisional` is `true` on a provisional result and absent otherwise. A final row and a row estimated before the marker existed therefore look the same, which is what the consequences above ask for.
+- The resolver decides it from the sources it tried for the usage period (`mayServeMore` in `GridIntensityResolver.ts`). A source could serve more later when its settled points do not cover the whole period and the part that is missing is one it can be asked for: not published yet, a gap, still preliminary, or not fetched because a request failed. A result is provisional when that is true of any source tried for the period. The search stops at the first source that covers the whole period, so sources after that one are not tried and do not count. When no source covers it, every source was tried and all of them count.
+- What a source can be asked for starts at the first whole period, of the granularity the resolver asks it for, that begins at or after the start of its data (`earliest`). A usage period that lies before that will never be served by the source and is final on its account. Four cases follow that the decision does not spell out. A period that lies wholly before the start of a source's data is final. A period that starts before a source's data and is covered from there on is partly covered, estimated and tier C, but final. A day of usage asked for by the day is final when the source's data starts at noon that day, although the source has hours of it: the resolver does not ask by the hour for it. A source that is failing but already holds the whole period in the store gives a final result, and so does a failing source whose data starts after the period.
+- Two cases cannot be judged, and the result is provisional. After a failed capability probe in a new process the source's window is not known. After a failed store read, points the store holds were not seen, so a fallback may be worse than the same configuration gives when the store works.
+- One case is provisional that the three bullets of point 1 do not name: a lower-ranked source covers the period while a higher-ranked one has only part of it, or nothing yet, without having failed. The decision's definition of a final result ("the best eligible source served the whole period with settled data") covers it.
+- A gap in a source's history that never fills leaves its periods provisional for good, as point 1 accepts ("a gap"). A refresh will estimate them again each time it runs. The same holds for a source whose data ends in the past, a loaded file for example: every later period stays provisional while that source is configured. A source that declares no `earliest` keeps every period it has no data for provisional too.
+- `IntensityPoint.isPreliminary` is the source's flag for a value it will replace. The resolver uses a preliminary point and marks the result. It holds the point in memory, in the store it already keeps for sources with session retention, so a run does not ask for it again. It never writes one to the configured store, so a later run fetches the period again. A preliminary point never takes the place of a settled one for the same period. This settles the question the NESO spike raised in its section 4.6: a stored preliminary point would never have been fetched again.
+- Held points are released together, by the first resolve call after the capability TTL, and a new process starts with none. If the source cannot be reached then, the result has less than before: in a test of 2026-11-12 a day that had 24 points, two of them preliminary, came back with 22 and tier C. For the refresh of point 3 this means that a refresh run during an outage can give a row that is worse than the one it replaces. The row stays provisional in that case, except when the source's lookback has moved past the period. The refresh has to decide what to do about it.
+- When no source can serve a region and the adapter falls back to the provider's static table, the fallback row is provisional if a configured source could serve the period later (`NoIntensityAvailableError.mayImprove`).
+- `mergeProvenance` marks a merged row provisional when either part is. Rows that differ only in the marker are not marked estimated because of it.
+- The quality tier is not changed by the marker.
+- Not handled, and not reachable until usage is resolved by the hour (Phase 3): after a failed probe in a new process the resolver reads the store at each granularity, finest first, and a stored daily value that covers an hour of usage gives a final tier B result where a healthy run would give tier A.
+- Tests: `packages/grid-intensity/src/__tests__/provisional.test.ts` covers the resolver and the adapter for each case above, and `packages/core/src/__tests__/provenance.test.ts` covers `mergeProvenance`.

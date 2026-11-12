@@ -2,7 +2,7 @@
 
 Recorded exchanges with the public NESO Carbon Intensity API (`https://api.carbonintensity.org.uk`), for the contract tests of the NESO grid intensity source (design section 13). They were recorded on 2026-11-10 between 10:02Z and 11:14Z in the spike that closed verification backlog item 4. The findings are in `docs/design/spikes/2026-11-neso.md`.
 
-No source uses these files yet. Phase 2 builds the source and its tests.
+`NesoSource` (`src/sources/NesoSource.ts`) is tested against these files, in `src/__tests__/NesoSource.test.ts` and `src/__tests__/NesoSource.resolver.test.ts`. The source reads the national range endpoint, and the current half hour as a reachability probe. So its tests use the `national-range` files, `national-current.json` and the four error files that are not about a region or a postcode. The other files record what the spike found about endpoints the source does not call. No test reads them.
 
 ## Licence and attribution
 
@@ -66,6 +66,8 @@ Errors:
 
 ## Using the fixtures
 
-Tests never call the API. Mock `global.fetch` as `packages/common/src/__tests__/EmissionsFactors.test.ts` does and answer with `response.status` and `response.body` from a fixture. The `request.url` is the exact URL that produced the body, so a test can also assert the URL the source builds.
+Tests never call the API. `mockNesoApi()` in `src/__tests__/fixtures/nesoApi.ts` stands in for `fetch`, given to the source or put in place of `global.fetch`. It answers the `request.url` of a fixture with the fixture's `response.status` and `response.body`. The `request.url` is the exact URL that produced the body, so a test that is answered has also shown that the source built that URL. A request for a URL the stand-in was not told about fails the test.
+
+Some files record a request the source never makes: `national-range-zero-actual.json` and `national-range-first-periods.json` are cut from ranges longer than the 14 days the source asks for at once, and the error files record requests that are wrong on purpose. A test serves the response of such a file for a request the source does make, and says so in a comment. Where a test needs more periods than any file holds (a whole day, or a range of more than 14 days), the stand-in generates a body in the recorded shape, and the test says so too.
 
 Do not re-record these casually. Recent actual values are revised by NESO after they first appear, so a new recording of the same request can differ.

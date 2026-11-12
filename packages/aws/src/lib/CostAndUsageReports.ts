@@ -39,6 +39,7 @@ import {
 import {
   AccumulateKilowattHoursBy,
   accumulateKilowattHours,
+  asOperationalEstimate,
   appendOrAccumulateEstimatesByDay,
   CloudConstants,
   CloudConstantsEmissionsFactors,
@@ -81,7 +82,6 @@ import {
   EC2_INSTANCE_TYPES,
   INSTANCE_FAMILY_TO_INSTANCE_TYPE_MAPPING,
 } from './AWSInstanceTypes'
-import { AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES } from './AWSRegions'
 
 export default class CostAndUsageReports {
   private readonly dataBaseName: string
@@ -159,7 +159,7 @@ export default class CostAndUsageReports {
         appendOrAccumulateEstimatesByDay(
           results,
           costAndUsageReportRow,
-          { ...footprintEstimate, provenance },
+          { ...asOperationalEstimate(footprintEstimate), provenance },
           grouping,
           tagNames,
         )
@@ -177,7 +177,7 @@ export default class CostAndUsageReports {
           appendOrAccumulateEstimatesByDay(
             results,
             rowData,
-            { ...footprintEstimate, provenance },
+            { ...asOperationalEstimate(footprintEstimate), provenance },
             grouping,
             tagNames,
           )
@@ -260,18 +260,9 @@ export default class CostAndUsageReports {
     region: string,
     period: Period,
   ): Promise<EmissionsFactorsResolution> {
-    return resolveEmissionsFactors(
-      'AWS',
-      region,
-      period.start,
-      period.end,
-      { factors: AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH },
-      {
-        legacyElectricityMapsZones:
-          AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-        logger: this.costAndUsageReportsLogger,
-      },
-    )
+    return resolveEmissionsFactors('AWS', region, period.start, period.end, {
+      factors: AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
+    })
   }
 
   private getFootprintEstimateFromUsageRow(
@@ -338,17 +329,21 @@ export default class CostAndUsageReports {
         }
 
         // if there exist any memory footprint or embodied emissions,
-        // add the kwh and co2e for all compute,  memory, and embodied emissions
-        if (memoryFootprint.co2e || embodiedEmissions.co2e) {
+        // add the kwh and co2e for all compute,  memory, and embodied emissions.
+        // The memory test is on its energy, as on Azure: its co2e is 0 at a
+        // grid intensity of 0, and the row must not lose its memory energy
+        // there (ADR 0024, implementation notes).
+        if (memoryFootprint.kilowattHours || embodiedEmissions.co2e) {
+          const operationalKilowattHours =
+            computeFootprint.kilowattHours + memoryFootprint.kilowattHours
           const kilowattHours =
-            computeFootprint.kilowattHours +
-            memoryFootprint.kilowattHours +
-            embodiedEmissions.kilowattHours
+            operationalKilowattHours + embodiedEmissions.kilowattHours
           accumulateKilowattHours(
             AWS_CLOUD_CONSTANTS.KILOWATT_HOURS_BY_SERVICE_AND_USAGE_UNIT,
             costAndUsageReportRow,
             kilowattHours,
             AccumulateKilowattHoursBy.COST,
+            operationalKilowattHours,
           )
           return {
             timestamp: computeFootprint.timestamp,
@@ -358,6 +353,8 @@ export default class CostAndUsageReports {
               memoryFootprint.co2e +
               embodiedEmissions.co2e,
             usesAverageCPUConstant: computeFootprint.usesAverageCPUConstant,
+            operationalKilowattHours,
+            embodiedCo2e: embodiedEmissions.co2e,
           }
         }
 

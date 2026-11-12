@@ -6,19 +6,16 @@
 import { configLoader } from '@cloud-carbon-footprint/common'
 import {
   AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
-  AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
   AWS_REGIONS,
 } from '@cloud-carbon-footprint/aws'
 import {
   GCP_DUAL_REGIONS,
-  GCP_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
   GCP_MULTI_REGIONS,
   GCP_REGIONS,
   getGCPEmissionsFactors,
 } from '@cloud-carbon-footprint/gcp'
 import {
   AZURE_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
-  AZURE_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
   AZURE_REGIONS,
 } from '@cloud-carbon-footprint/azure'
 import {
@@ -54,11 +51,11 @@ const providerRegions = (): ProviderRegion[] => {
 }
 
 /**
- * What each configured grid intensity source can deliver for each provider
- * region (design section 6.5): the report behind the doctor command and
- * GET /api/grid-intensity/capabilities.
+ * The grid zone of each provider region and what each configured grid
+ * intensity source can deliver for it (design section 6.5): the report
+ * behind the doctor command and GET /api/grid-intensity/capabilities.
  *
- * The static tables and zone maps are the ones the provider packages give
+ * The static tables are the ones the provider packages give
  * resolveEmissionsFactors, so the report describes what estimates would use.
  */
 export const getGridIntensityCapabilities = (): Promise<CapabilityReport> =>
@@ -68,10 +65,5 @@ export const getGridIntensityCapabilities = (): Promise<CapabilityReport> =>
       AWS: { factors: AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH },
       GCP: { factors: getGCPEmissionsFactors },
       AZURE: { factors: AZURE_EMISSIONS_FACTORS_METRIC_TON_PER_KWH },
-    },
-    legacyElectricityMapsZones: {
-      AWS: AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-      GCP: GCP_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-      AZURE: AZURE_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
     },
   }).capabilities()

@@ -4,7 +4,7 @@ Date: 2026-11-05
 
 ## Status
 
-Accepted
+Accepted. Amended by ADR 0026 on 2026-11-12: Electricity Maps, which the context below names, is no longer called or built in, and live sources read primary publishers only.
 
 ## Decision
 

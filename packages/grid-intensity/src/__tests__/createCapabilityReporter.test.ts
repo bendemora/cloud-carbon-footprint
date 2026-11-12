@@ -19,7 +19,6 @@ jest.mock('mongodb', () => ({
 }))
 jest.mock('@cloud-carbon-footprint/common', () => ({
   configLoader: jest.fn(),
-  getEmissionsFactors: jest.fn(),
   Logger: jest.fn().mockImplementation(() => ({ warn: jest.fn() })),
 }))
 
@@ -41,10 +40,6 @@ const input = {
     AWS: { factors: { 'eu-west-2': 0.000305, Unknown: 0.0004 } },
     GCP: { factors: () => ({ 'us-central1': 0.000456 }) },
     AZURE: { factors: { uksouth: 0.000225 } },
-  },
-  legacyElectricityMapsZones: {
-    AWS: { 'eu-west-2': 'GB' },
-    GCP: { 'us-central1': 'US-MIDW-MISO' },
   },
 }
 
@@ -89,27 +84,11 @@ describe('createCapabilityReporter', () => {
         ],
       })),
     )
-    expect(report).not.toHaveProperty('legacyElectricityMaps')
-    expect(report.regions[0]).not.toHaveProperty('legacyElectricityMapsZoneId')
-  })
-
-  it('says that the Electricity Maps v3 lookup is in use, and its tier, while a token is set', async () => {
-    mockConfig({ ELECTRICITY_MAPS_TOKEN: 'for-tests' })
-    const report = await createCapabilityReporter(input).capabilities()
-
-    expect(report.legacyElectricityMaps).toEqual({
-      sourceId: 'electricitymaps-v3',
-      qualityTier: 'C',
-      message: expect.stringContaining('tier C'),
-    })
-    expect(
-      report.regions.map((region) => region.legacyElectricityMapsZoneId),
-    ).toEqual(['GB', 'US-MIDW-MISO', null])
-    // The sources are reported as they are without the lookup.
-    expect(report.regions[0].sources[0]).toMatchObject({
-      sourceId: 'static',
-      bestTier: { last24Hours: 'D', last30Days: 'D', last12Months: 'D' },
-    })
+    expect(report.regions.map((region) => region.gridZoneId)).toEqual([
+      'GB',
+      'US-MIDW-MISO',
+      'GB',
+    ])
   })
 
   it('reports on the default resolver that estimates use, without building another', async () => {
@@ -121,9 +100,8 @@ describe('createCapabilityReporter', () => {
       input.staticTables.AWS,
     )
     await createCapabilityReporter(input).capabilities()
-    // One read of the configuration to build the resolver, and one by the
-    // reporter to see whether a token is set.
-    expect(configLoader).toHaveBeenCalledTimes(2)
+    // One read of the configuration, to build the resolver.
+    expect(configLoader).toHaveBeenCalledTimes(1)
   })
 
   it('builds the default resolver when there is none, so that shutdownDefaultResolver closes its store', async () => {

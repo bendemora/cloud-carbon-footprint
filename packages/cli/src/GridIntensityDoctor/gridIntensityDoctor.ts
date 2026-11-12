@@ -11,9 +11,9 @@ import {
 } from '@cloud-carbon-footprint/grid-intensity'
 
 /**
- * The grid intensity doctor (design section 6.5): what each configured
- * source can deliver for every provider region, as a table. It needs no
- * cloud credentials.
+ * The grid intensity doctor (design section 6.5): the grid zone of every
+ * provider region and what each configured source can deliver for it, as a
+ * table. It needs no cloud credentials.
  */
 export default async function gridIntensityDoctor(): Promise<string> {
   try {
@@ -34,28 +34,24 @@ const WINDOWS = [
 const NONE = '-'
 
 const EXPLANATION =
+  'Grid zone is the electricity grid the region is on, and source zone is the name the source has for it; a dash means there is none. ' +
   'Tiers are the best each source can deliver for a day of usage, the finest usage period CCF produces, in each window: B from hourly or daily intensity, C from monthly or annual intensity or from a day covered in part, D from the static annual factors. ' +
   'A percentage is the share of the days in the window that the source can serve, shown when that is not all of them. ' +
   'A source that needs acknowledgement is not used until it is listed in GRID_INTENSITY_LICENCE_ACKNOWLEDGEMENTS.'
 
 export const formatCapabilityReport = (report: CapabilityReport): string => {
-  const legacy = report.legacyElectricityMaps
   const header = [
     'Provider',
     'Region',
-    ...(legacy ? ['Electricity Maps v3 zone'] : []),
+    'Grid zone',
     'Source',
-    'Zone',
+    'Source zone',
     ...WINDOWS.map(([, title]) => title),
     'Licence',
     'Error',
   ]
   const rows = report.regions.flatMap((region) => {
-    const lead = [
-      region.provider,
-      region.region,
-      ...(legacy ? [region.legacyElectricityMapsZoneId ?? NONE] : []),
-    ]
+    const lead = [region.provider, region.region, region.gridZoneId ?? NONE]
     if (!region.sources.length)
       return [[...lead, NONE, NONE, ...WINDOWS.map(() => NONE), NONE, '']]
     return region.sources.map((source) => [
@@ -79,7 +75,6 @@ export const formatCapabilityReport = (report: CapabilityReport): string => {
   return [
     `Grid intensity capabilities at ${report.generatedAt.toISOString()}`,
     EXPLANATION,
-    ...(legacy ? ['', legacy.message] : []),
     '',
     ...table([header, ...rows]),
     ...(attributions.size
