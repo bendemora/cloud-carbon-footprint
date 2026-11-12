@@ -185,6 +185,23 @@ describe('resolveEmissionsFactors', () => {
       expect(mockWarn.mock.calls[0][0]).toContain("'no-such-source'")
     })
 
+    it.each(['constructor', 'toString', 'valueOf', '__proto__'])(
+      'treats %s, a name every object inherits, as an unknown source id',
+      async (id) => {
+        mockConfig({ SOURCES: [id, 'static'] })
+        const result = await resolveEmissionsFactors(
+          'AWS',
+          'eu-west-2',
+          START,
+          END,
+          awsTable,
+        )
+        expect(result.provenance.sourceId).toBe('static')
+        expect(mockWarn).toHaveBeenCalledTimes(1)
+        expect(mockWarn.mock.calls[0][0]).toContain(`'${id}'`)
+      },
+    )
+
     it('warns about a setting that is set but no longer read, once, when the default resolver is built', async () => {
       const warning = 'OLD_SETTING is set but is no longer read.'
       mockConfig({}, {}, { REMOVED_SETTING_WARNINGS: [warning] })
