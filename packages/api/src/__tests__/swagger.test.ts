@@ -49,6 +49,42 @@ describe('swaggerDocs', () => {
     ).toEqual(['A', 'B', 'C', 'D', null])
   })
 
+  it('should document the cachedEstimates parameter of the capabilities endpoint and what it adds to the response', async () => {
+    const res = await request(server).get('/docs.json')
+    const operation = res.body.paths['/api/grid-intensity/capabilities'].get
+    expect(operation.parameters).toEqual([
+      {
+        name: 'cachedEstimates',
+        in: 'query',
+        schema: { type: 'boolean', default: false },
+        description: expect.stringContaining(
+          'counting reads the whole estimates cache',
+        ),
+        required: false,
+      },
+    ])
+    const { cachedEstimates } =
+      res.body.components.schemas.GridIntensityCapabilitiesResponse.properties
+    expect(cachedEstimates.type).toBe('array')
+    expect(cachedEstimates.description).toContain('cachedEstimates=true')
+    expect(cachedEstimates.items.required).toEqual([
+      'groupBy',
+      'cachedPeriods',
+      'provisionalPeriods',
+    ])
+    expect(cachedEstimates.items.properties.groupBy.enum).toEqual([
+      'day',
+      'week',
+      'month',
+      'quarter',
+      'year',
+    ])
+    // The field is optional: only generatedAt and regions are always there.
+    expect(
+      res.body.components.schemas.GridIntensityCapabilitiesResponse.required,
+    ).toEqual(['generatedAt', 'regions'])
+  })
+
   it('should log the availability of the docs', () => {
     const spy = jest.spyOn(Logger.prototype, 'info')
     swaggerDocs(server, port)

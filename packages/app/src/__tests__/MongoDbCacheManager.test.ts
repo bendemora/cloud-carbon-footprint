@@ -9,6 +9,7 @@ import {
   EstimationResult,
   GroupBy,
   Logger,
+  ServiceData,
 } from '@cloud-carbon-footprint/common'
 import MongoDbCacheManager from '../MongoDbCacheManager'
 import { getDatesWithinRequestTimeFrame } from '../common/helpers'
@@ -990,5 +991,534 @@ describe('MongoDbCacheManager', () => {
       expect(Logger.prototype.warn).toHaveBeenCalled()
       expect(missingDates).toEqual([])
     })
+  })
+
+  /** A cached row of a provider. Its service name tells the rows apart. */
+  const cachedRow = (
+    date: string,
+    cloudProvider: string,
+    serviceName: string,
+    isProvisional = false,
+  ): Doc => ({
+    ...storedRow(new Date(date), 0),
+    cloudProvider,
+    serviceName,
+    provenance: {
+      ...staticProvenance,
+      ...(isProvisional && { isProvisional: true }),
+    },
+  })
+
+  /** Whether a row matches a filter of the kinds the cache manager sends. */
+  const matches = (row: Doc, filter: Doc): boolean =>
+    Object.entries(filter).every(([field, condition]) => {
+      const value = row[field]
+      if ('$in' in condition)
+        return condition.$in.some((candidate: unknown) =>
+          candidate instanceof RegExp
+            ? typeof value === 'string' && candidate.test(value)
+            : candidate instanceof Date
+              ? value.getTime() === candidate.getTime()
+              : candidate === value,
+        )
+      if ('$gte' in condition && '$lte' in condition)
+        return value >= condition.$gte && value <= condition.$lte
+      throw new Error(`the fake does not support ${JSON.stringify(condition)}`)
+    })
+
+  /** A client whose one collection holds the given rows in memory. */
+  const clientWithRows = (rows: Doc[]) => {
+    const operations: string[] = []
+    const collection = {
+      rows,
+      deleteMany: jest.fn(async (filter: Doc) => {
+        operations.push('deleteMany')
+        const kept = collection.rows.filter((row) => !matches(row, filter))
+        const deletedCount = collection.rows.length - kept.length
+        collection.rows = kept
+        return { deletedCount }
+      }),
+      insertMany: jest.fn(async (documents: Doc[]) => {
+        operations.push('insertMany')
+        if (!documents.length)
+          throw new Error('Invalid BulkOperation, Batch cannot be empty')
+        collection.rows = [...collection.rows, ...documents]
+      }),
+    }
+    const database = {
+      collection: jest.fn().mockReturnValue(collection),
+      createCollection: jest.fn(),
+      listCollections: jest.fn(),
+    }
+    const client = { db: jest.fn().mockReturnValue(database) }
+    MongoDbCacheManager.mongoClient = client as unknown as mongo.MongoClient
+    return { client, database, collection, operations }
+  }
+
+  const namesOf = (rows: Doc[]) =>
+    rows.map((row) => [
+      row.timestamp.toISOString().slice(0, 10),
+      row.cloudProvider,
+      row.serviceName,
+    ])
+
+  describe('replaces estimates', () => {
+    const cachedRows = () => [
+      cachedRow('2026-11-01', 'AWS', 'aws-1'),
+      cachedRow('2026-11-01', 'GCP', 'gcp-1'),
+      cachedRow('2026-11-02', 'AWS', 'aws-2'),
+      cachedRow('2026-11-02', 'GCP', 'gcp-2'),
+      cachedRow('2026-11-03', 'AWS', 'aws-3'),
+    ]
+
+    const newRow = (cloudProvider: string, serviceName: string) =>
+      asServiceEstimate(
+        cachedRow('2026-11-02', cloudProvider, serviceName),
+      ) as ServiceData
+
+    const newEstimates = (
+      serviceEstimates = [newRow('AWS', 'new-aws-2')],
+      date = '2026-11-02',
+    ): EstimationResult[] => [
+      {
+        timestamp: new Date(date),
+        serviceEstimates,
+        periodStartDate: new Date(date),
+        periodEndDate: new Date(`${date}T23:59:59.000Z`),
+        groupBy: GroupBy.day,
+      },
+    ]
+
+    afterEach(() => {
+      MongoDbCacheManager.mongoClient = undefined
+    })
+
+    it('deletes the rows of the periods and providers, then inserts the new rows', async () => {
+      const { client, database, collection, operations } =
+        clientWithRows(cachedRows())
+
+      await new MongoDbCacheManager().replaceEstimates(newEstimates(), 'day', [
+        'AWS',
+      ])
+
+      expect(client.db).toHaveBeenCalledWith('ccf')
+      expect(database.collection).toHaveBeenCalledWith('estimates-by-day')
+      expect(collection.deleteMany).toHaveBeenCalledWith({
+        timestamp: { $in: [new Date('2026-11-02')] },
+        cloudProvider: { $in: [/^AWS$/i] },
+      })
+      // Flat service estimates with the timestamp and groupBy of their
+      // result, as setEstimates stores them.
+      expect(collection.insertMany).toHaveBeenCalledWith([
+        {
+          ...newRow('AWS', 'new-aws-2'),
+          timestamp: new Date('2026-11-02'),
+          groupBy: 'day',
+        },
+      ])
+      expect(operations).toEqual(['deleteMany', 'insertMany'])
+      expect(namesOf(collection.rows)).toEqual([
+        ['2026-11-01', 'AWS', 'aws-1'],
+        ['2026-11-01', 'GCP', 'gcp-1'],
+        ['2026-11-02', 'GCP', 'gcp-2'],
+        ['2026-11-03', 'AWS', 'aws-3'],
+        ['2026-11-02', 'AWS', 'new-aws-2'],
+      ])
+    })
+
+    it('deletes every row of the periods when no providers are given', async () => {
+      const { collection } = clientWithRows(cachedRows())
+
+      await new MongoDbCacheManager().replaceEstimates(newEstimates(), 'day')
+
+      expect(collection.deleteMany).toHaveBeenCalledWith({
+        timestamp: { $in: [new Date('2026-11-02')] },
+      })
+      expect(namesOf(collection.rows)).toEqual([
+        ['2026-11-01', 'AWS', 'aws-1'],
+        ['2026-11-01', 'GCP', 'gcp-1'],
+        ['2026-11-03', 'AWS', 'aws-3'],
+        ['2026-11-02', 'AWS', 'new-aws-2'],
+      ])
+    })
+
+    it('compares providers without regard to case, and by their whole name', async () => {
+      const { collection } = clientWithRows([
+        cachedRow('2026-11-02', 'AliCloud', 'ali-2'),
+        cachedRow('2026-11-02', 'AliCloud2', 'other-2'),
+        cachedRow('2026-11-02', 'AWS', 'aws-2'),
+        cachedRow('2026-11-02', 'A.S', 'dot-2'),
+      ])
+
+      await new MongoDbCacheManager().replaceEstimates(
+        newEstimates([newRow('AliCloud', 'new-ali-2')]),
+        'day',
+        ['ALICLOUD', 'a.s'],
+      )
+
+      expect(namesOf(collection.rows)).toEqual([
+        ['2026-11-02', 'AliCloud2', 'other-2'],
+        ['2026-11-02', 'AWS', 'aws-2'],
+        ['2026-11-02', 'AliCloud', 'new-ali-2'],
+      ])
+    })
+
+    it('replaces several periods with one delete and one insert, naming each period once', async () => {
+      const { collection, operations } = clientWithRows(cachedRows())
+
+      await new MongoDbCacheManager().replaceEstimates(
+        [
+          ...newEstimates([newRow('AWS', 'new-aws-1')], '2026-11-01'),
+          ...newEstimates([newRow('AWS', 'new-aws-2')]),
+          ...newEstimates([newRow('AWS', 'new-aws-2b')]),
+        ],
+        'day',
+        ['AWS'],
+      )
+
+      expect(collection.deleteMany).toHaveBeenCalledWith({
+        timestamp: { $in: [new Date('2026-11-01'), new Date('2026-11-02')] },
+        cloudProvider: { $in: [/^AWS$/i] },
+      })
+      expect(operations).toEqual(['deleteMany', 'insertMany'])
+      expect(namesOf(collection.rows)).toEqual([
+        ['2026-11-01', 'GCP', 'gcp-1'],
+        ['2026-11-02', 'GCP', 'gcp-2'],
+        ['2026-11-03', 'AWS', 'aws-3'],
+        ['2026-11-01', 'AWS', 'new-aws-1'],
+        ['2026-11-02', 'AWS', 'new-aws-2'],
+        ['2026-11-02', 'AWS', 'new-aws-2b'],
+      ])
+    })
+
+    it('inserts nothing when the new periods hold no rows', async () => {
+      const { collection, operations } = clientWithRows(cachedRows())
+
+      await new MongoDbCacheManager().replaceEstimates(newEstimates([]), 'day')
+
+      expect(operations).toEqual(['deleteMany'])
+      expect(namesOf(collection.rows)).toEqual([
+        ['2026-11-01', 'AWS', 'aws-1'],
+        ['2026-11-01', 'GCP', 'gcp-1'],
+        ['2026-11-03', 'AWS', 'aws-3'],
+      ])
+    })
+
+    it('does nothing when there are no estimates', async () => {
+      const { client, operations } = clientWithRows(cachedRows())
+
+      await new MongoDbCacheManager().replaceEstimates([], 'day', ['AWS'])
+
+      expect(client.db).not.toHaveBeenCalled()
+      expect(operations).toEqual([])
+    })
+
+    it('fails and inserts nothing when the delete fails', async () => {
+      const { collection } = clientWithRows(cachedRows())
+      collection.deleteMany.mockRejectedValue(new Error('the delete failed'))
+
+      await expect(
+        new MongoDbCacheManager().replaceEstimates(newEstimates(), 'day', [
+          'AWS',
+        ]),
+      ).rejects.toThrow('the delete failed')
+
+      expect(collection.insertMany).not.toHaveBeenCalled()
+    })
+
+    it('fails when the insert fails, and the rows it deleted are then missing from the cache', async () => {
+      const { collection } = clientWithRows(cachedRows())
+      collection.insertMany.mockRejectedValue(new Error('the insert failed'))
+
+      await expect(
+        new MongoDbCacheManager().replaceEstimates(newEstimates(), 'day', [
+          'AWS',
+        ]),
+      ).rejects.toThrow('the insert failed')
+
+      expect(namesOf(collection.rows)).toEqual([
+        ['2026-11-01', 'AWS', 'aws-1'],
+        ['2026-11-01', 'GCP', 'gcp-1'],
+        ['2026-11-02', 'GCP', 'gcp-2'],
+        ['2026-11-03', 'AWS', 'aws-3'],
+      ])
+    })
+
+    it('fails with a message that says so when there is no connection', async () => {
+      MongoDbCacheManager.mongoClient = undefined
+
+      await expect(
+        new MongoDbCacheManager().replaceEstimates(newEstimates(), 'day'),
+      ).rejects.toThrow('There is no connection to MongoDB')
+    })
+  })
+
+  describe('lists the cached periods', () => {
+    /** The value of an aggregation expression of the kinds getCachedPeriods uses. */
+    const evaluate = (row: Doc, expression: any): unknown => {
+      if (typeof expression === 'string' && expression.startsWith('$'))
+        return expression
+          .slice(1)
+          .split('.')
+          .reduce((value, field) => value?.[field], row)
+      if (expression?.$cond) {
+        const [condition, then, otherwise] = expression.$cond
+        return evaluate(row, evaluate(row, condition) ? then : otherwise)
+      }
+      if (expression?.$eq) {
+        const [left, right] = expression.$eq.map((operand: unknown) =>
+          evaluate(row, operand),
+        )
+        return left === right
+      }
+      if (expression && typeof expression === 'object')
+        return Object.fromEntries(
+          Object.entries(expression).map(([field, value]) => [
+            field,
+            evaluate(row, value),
+          ]),
+        )
+      return expression
+    }
+
+    /**
+     * $group with $max accumulators. Like the server, $max leaves out the
+     * rows that have no value, and is null when none has one.
+     */
+    const groupWithMax = (rows: Doc[], spec: Doc): Doc[] => {
+      const { _id: idOfGroup, ...accumulators } = spec
+      const groups = new Map<string, Doc>()
+      for (const row of rows) {
+        const id = evaluate(row, idOfGroup)
+        const group = groups.get(JSON.stringify(id)) ?? { _id: id }
+        for (const [field, accumulator] of Object.entries(accumulators)) {
+          const value = evaluate(row, accumulator.$max) ?? null
+          const greatest = group[field] ?? null
+          group[field] =
+            greatest === null || (value !== null && value > greatest)
+              ? value
+              : greatest
+        }
+        groups.set(JSON.stringify(id), group)
+      }
+      return [...groups.values()]
+    }
+
+    /** $sort by one field, which may be a field of _id. */
+    const sortByPath = (docs: Doc[], spec: Doc): Doc[] => {
+      const [[path, direction]] = Object.entries(spec)
+      const valueOf = (doc: Doc) => evaluate(doc, '$' + path) as Date
+      return [...docs].sort(
+        (a, b) => direction * (valueOf(a).getTime() - valueOf(b).getTime()),
+      )
+    }
+
+    /**
+     * Stands in for collection.aggregate with the stages getCachedPeriods
+     * uses. Unlike fakeAggregate it applies $match.
+     */
+    const aggregateOver = (rows: Doc[]) => (stages: Doc[]) => {
+      let docs = rows
+      for (const stage of stages) {
+        const [operator, spec] = Object.entries(stage)[0]
+        if (operator === '$match')
+          docs = docs.filter((row) => matches(row, spec))
+        else if (operator === '$group') docs = groupWithMax(docs, spec)
+        else if (operator === '$sort') docs = sortByPath(docs, spec)
+        else throw new Error(`the fake does not support ${operator}`)
+      }
+      return { toArray: async () => docs }
+    }
+
+    const useRows = (aggregate: (stages: Doc[]) => unknown) => {
+      const database = {
+        collection: jest.fn().mockReturnValue({
+          aggregate: mockAggregation.mockImplementation(aggregate),
+        }),
+        createCollection: jest.fn(),
+        listCollections: jest.fn(),
+      }
+      MongoDbCacheManager.mongoClient = {
+        db: jest.fn().mockReturnValue(database),
+      } as unknown as mongo.MongoClient
+      return database
+    }
+
+    /** A cached row of the region with the tier. cachedRow has tier D in us-east-1. */
+    const tieredRow = (
+      date: string,
+      cloudProvider: string,
+      region: string,
+      qualityTier: string,
+    ): Doc => ({
+      ...cachedRow(date, cloudProvider, `${region} ${qualityTier}`),
+      region,
+      provenance: { ...staticProvenance, qualityTier },
+    })
+
+    const cachedRows = () => [
+      cachedRow('2026-11-03', 'AWS', 'aws-3'),
+      cachedRow('2026-11-01', 'AWS', 'aws-1'),
+      cachedRow('2026-11-02', 'AWS', 'aws-2'),
+      cachedRow('2026-11-02', 'GCP', 'gcp-2', true),
+      {
+        ...cachedRow('2026-11-01', 'GCP', 'no provenance'),
+        provenance: undefined,
+      },
+      tieredRow('2026-11-02', 'AWS', 'us-east-1', 'B'),
+      tieredRow('2026-11-02', 'AWS', 'eu-west-2', 'B'),
+      tieredRow('2026-11-02', 'AWS', 'eu-west-2', 'C'),
+      tieredRow('2026-11-02', 'AWS', 'eu-west-2', 'A'),
+    ]
+
+    const worstTier = (
+      cloudProvider: string,
+      region: string,
+      qualityTier: string,
+    ) => ({ cloudProvider, region, qualityTier })
+
+    const periodsStages = [
+      {
+        $group: {
+          _id: {
+            timestamp: '$timestamp',
+            cloudProvider: '$cloudProvider',
+            region: '$region',
+          },
+          provisional: {
+            $max: {
+              $cond: [{ $eq: ['$provenance.isProvisional', true] }, 1, 0],
+            },
+          },
+          worstTier: { $max: '$provenance.qualityTier' },
+        },
+      },
+      { $sort: { '_id.timestamp': 1 } },
+    ]
+
+    afterEach(() => {
+      MongoDbCacheManager.mongoClient = undefined
+      jest.resetAllMocks()
+    })
+
+    it('lists the periods, oldest first, with the ones that hold a provisional row marked and the worst tier of each provider and region', async () => {
+      const database = useRows(aggregateOver(cachedRows()))
+
+      const periods = await new MongoDbCacheManager().getCachedPeriods('day')
+
+      expect(periods).toEqual([
+        {
+          timestamp: new Date('2026-11-01'),
+          isProvisional: false,
+          // The GCP row of the day has no provenance.
+          worstTiers: [worstTier('AWS', 'us-east-1', 'D')],
+        },
+        {
+          timestamp: new Date('2026-11-02'),
+          isProvisional: true,
+          worstTiers: [
+            worstTier('AWS', 'us-east-1', 'D'),
+            worstTier('GCP', 'us-east-1', 'D'),
+            worstTier('AWS', 'eu-west-2', 'C'),
+          ],
+        },
+        {
+          timestamp: new Date('2026-11-03'),
+          isProvisional: false,
+          worstTiers: [worstTier('AWS', 'us-east-1', 'D')],
+        },
+      ])
+      expect(database.collection).toHaveBeenCalledWith('estimates-by-day')
+      expect(mockAggregation).toHaveBeenCalledWith(periodsStages, {
+        allowDiskUse: true,
+      })
+    })
+
+    it('lists only the periods whose timestamp lies in the range, both ends included', async () => {
+      useRows(aggregateOver(cachedRows()))
+      const range = {
+        startDate: new Date('2026-11-02'),
+        endDate: new Date('2026-11-03'),
+      }
+
+      const periods = await new MongoDbCacheManager().getCachedPeriods(
+        'day',
+        range,
+      )
+
+      expect(
+        periods.map(({ timestamp, isProvisional }) => [
+          timestamp,
+          isProvisional,
+        ]),
+      ).toEqual([
+        [new Date('2026-11-02'), true],
+        [new Date('2026-11-03'), false],
+      ])
+      expect(mockAggregation).toHaveBeenCalledWith(
+        [
+          {
+            $match: {
+              timestamp: { $gte: range.startDate, $lte: range.endDate },
+            },
+          },
+          ...periodsStages,
+        ],
+        { allowDiskUse: true },
+      )
+    })
+
+    it('leaves out a tier that is not one of the four', async () => {
+      useRows(
+        aggregateOver([
+          tieredRow('2026-11-01', 'AWS', 'us-east-1', 'B'),
+          tieredRow('2026-11-01', 'AWS', 'eu-west-2', 'unknown'),
+        ]),
+      )
+
+      expect(await new MongoDbCacheManager().getCachedPeriods('day')).toEqual([
+        {
+          timestamp: new Date('2026-11-01'),
+          isProvisional: false,
+          worstTiers: [worstTier('AWS', 'us-east-1', 'B')],
+        },
+      ])
+    })
+
+    it('has no periods for a collection without rows, and neither looks for the collection nor creates it', async () => {
+      const database = useRows(aggregateOver([]))
+
+      expect(await new MongoDbCacheManager().getCachedPeriods('week')).toEqual(
+        [],
+      )
+
+      expect(database.collection).toHaveBeenCalledWith('estimates-by-week')
+      expect(database.listCollections).not.toHaveBeenCalled()
+      expect(database.createCollection).not.toHaveBeenCalled()
+    })
+
+    it('fails when the query fails', async () => {
+      useRows(() => ({
+        toArray: async () => {
+          throw new Error('the query failed')
+        },
+      }))
+
+      await expect(
+        new MongoDbCacheManager().getCachedPeriods('day'),
+      ).rejects.toThrow('the query failed')
+    })
+
+    it('fails with a message that says so when there is no connection', async () => {
+      await expect(
+        new MongoDbCacheManager().getCachedPeriods('day'),
+      ).rejects.toThrow('There is no connection to MongoDB')
+    })
+  })
+
+  it('says where the rows of a grouping are', () => {
+    expect(new MongoDbCacheManager().locationOf('month')).toBe(
+      'MongoDB collection ccf.estimates-by-month',
+    )
   })
 })

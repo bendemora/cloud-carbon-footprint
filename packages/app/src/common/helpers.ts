@@ -10,7 +10,10 @@ import {
   EstimationResult,
   getPeriodEndDate,
   GroupBy,
+  QualityTier,
+  ServiceData,
 } from '@cloud-carbon-footprint/common'
+import { CachedPeriod, DateRange, WorstTier } from '../CacheManager'
 import { EstimationRequest } from '../CreateValidRequest'
 import R from 'ramda'
 
@@ -84,6 +87,43 @@ export const getCachedData = async (
     dataStream.pipe(delimitedStream)
   })
 }
+
+/**
+ * Reads a cache file for the operations that must know all of it: replacing
+ * cached rows and listing the cached periods (ADR 0025). It reads as
+ * getCachedData does, with three differences.
+ *
+ * - It fails when the stream it reads from fails. getCachedData does not
+ *   notice that: its result then never settles.
+ * - It leaves out the empty array that an empty cache reads as. A cache file
+ *   is created holding "[]" on one line, which getCachedData reads as one
+ *   entry, and the first write to a local cache file carries that entry
+ *   along as a line of its own.
+ * - It fails when any other entry is not an estimation result, so that a
+ *   cache it does not understand is not written again.
+ */
+export const readCachedData = async (
+  dataStream: Stream,
+): Promise<EstimationResult[]> => {
+  const entries: unknown[] = await new Promise((resolve, reject) => {
+    dataStream.once('error', reject)
+    getCachedData(dataStream).then(resolve, reject)
+  })
+  const results = entries.filter(
+    (entry) => !(Array.isArray(entry) && entry.length === 0),
+  )
+  const unknown = results.find((entry) => !isEstimationResult(entry))
+  if (unknown !== undefined)
+    throw new Error(
+      `The estimates cache holds an entry that is not an estimation result: ${JSON.stringify(unknown).slice(0, 80)}`,
+    )
+  return results as EstimationResult[]
+}
+
+const isEstimationResult = (entry: any): boolean =>
+  entry?.timestamp instanceof Date &&
+  !Number.isNaN(entry.timestamp.getTime()) &&
+  Array.isArray(entry.serviceEstimates)
 
 const isNotADataDelimiter = (l: string) => {
   // data delimiters are [, ], or empty line
@@ -264,4 +304,154 @@ export const mergeEstimates = (
   while (j < estimatesTwo.length) mergedData.push(estimatesTwo[j++])
 
   return mergedData
+}
+
+const timeOf = ({ timestamp }: { timestamp: Date }): number =>
+  new Date(timestamp).getTime()
+
+/**
+ * The cached estimates with the periods of the new estimates replaced
+ * (ADR 0025), ordered by timestamp. It is what the cache file holds after
+ * CacheManager.replaceEstimates.
+ *
+ * For each period of the new estimates, the cached rows of the given cloud
+ * providers go and the new rows take their place. Providers are compared
+ * without regard to case. With no cloudProviders every cached row of the
+ * period goes. A period that is not cached is added. Cached periods that are
+ * not among the new estimates stay as they are. Unlike mergeEstimates it does
+ * not need either list to be in order, and it leaves one result for each
+ * period it replaces, also when the cache held that period more than once.
+ * A cached entry without a timestamp is not a period and is left out: an
+ * empty cache file reads as one (see readCachedData).
+ */
+export const replacePeriods = (
+  cachedEstimates: EstimationResult[],
+  newEstimates: EstimationResult[],
+  cloudProviders?: string[],
+): EstimationResult[] => {
+  const providers =
+    cloudProviders &&
+    new Set(cloudProviders.map((provider) => provider.toUpperCase()))
+
+  // New results that share a timestamp are the rows of one period.
+  const replacements = new Map<number, EstimationResult>()
+  for (const estimate of newEstimates) {
+    const sameTime = replacements.get(timeOf(estimate))
+    replacements.set(
+      timeOf(estimate),
+      sameTime
+        ? {
+            ...sameTime,
+            serviceEstimates: sameTime.serviceEstimates.concat(
+              estimate.serviceEstimates,
+            ),
+          }
+        : estimate,
+    )
+  }
+
+  const untouched: EstimationResult[] = []
+  const keptRows = new Map<number, ServiceData[]>()
+  for (const cached of cachedEstimates) {
+    const time = timeOf(cached)
+    if (Number.isNaN(time)) continue
+    if (!replacements.has(time)) untouched.push(cached)
+    else if (providers)
+      keptRows.set(
+        time,
+        (keptRows.get(time) ?? []).concat(
+          cached.serviceEstimates.filter(
+            (row) => !providers.has(row.cloudProvider.toUpperCase()),
+          ),
+        ),
+      )
+  }
+
+  const replaced = [...replacements].map(([time, estimate]) => ({
+    ...estimate,
+    serviceEstimates: (keptRows.get(time) ?? []).concat(
+      estimate.serviceEstimates,
+    ),
+  }))
+  return [...untouched, ...replaced].sort((a, b) => timeOf(a) - timeOf(b))
+}
+
+/** The quality tiers, best first (design section 6.4). */
+export const QUALITY_TIERS: QualityTier[] = ['A', 'B', 'C', 'D']
+
+/** Whether the first tier is worse than the second. D is the worst. */
+export const isWorseTier = (tier: QualityTier, than: QualityTier): boolean =>
+  QUALITY_TIERS.indexOf(tier) > QUALITY_TIERS.indexOf(than)
+
+/** One id for a region of a cloud provider, whatever the provider's case. */
+export const regionIdOf = (cloudProvider: string, region: string): string =>
+  `${cloudProvider.toUpperCase()}\u0000${region}`
+
+/**
+ * Adds rows to the worst tiers found so far, which are held by regionIdOf.
+ * A row counts when it has provenance with one of the four tiers.
+ */
+const noteWorstTiers = (
+  worstTiers: Map<string, WorstTier>,
+  rows: ServiceData[],
+): void => {
+  for (const { cloudProvider, region, provenance } of rows) {
+    const qualityTier = provenance?.qualityTier
+    if (!QUALITY_TIERS.includes(qualityTier)) continue
+    const regionId = regionIdOf(cloudProvider, region)
+    const worst = worstTiers.get(regionId)
+    if (!worst || isWorseTier(qualityTier, worst.qualityTier))
+      worstTiers.set(regionId, { cloudProvider, region, qualityTier })
+  }
+}
+
+/**
+ * The worst quality tier among the rows that carry provenance, for each
+ * cloud provider and region that has such rows. Providers are told apart
+ * without regard to case.
+ */
+export const worstTiersOf = (rows: ServiceData[]): WorstTier[] => {
+  const worstTiers = new Map<string, WorstTier>()
+  noteWorstTiers(worstTiers, rows)
+  return [...worstTiers.values()]
+}
+
+/**
+ * The periods of cached estimates, oldest first: whether each holds
+ * provisional rows, and the worst quality tier of its rows by cloud provider
+ * and region (CacheManager.getCachedPeriods). With a range, only the periods
+ * whose timestamp lies in it, both ends included. Results that share a
+ * timestamp count as one period.
+ */
+export const cachedPeriodsOf = (
+  cachedEstimates: EstimationResult[],
+  range?: DateRange,
+): CachedPeriod[] => {
+  const periods = new Map<
+    number,
+    { isProvisional: boolean; worstTiers: Map<string, WorstTier> }
+  >()
+  for (const estimate of cachedEstimates) {
+    const time = timeOf(estimate)
+    const isInRange =
+      !range ||
+      (time >= range.startDate.getTime() && time <= range.endDate.getTime())
+    if (!isInRange) continue
+    const period = periods.get(time) ?? {
+      isProvisional: false,
+      worstTiers: new Map<string, WorstTier>(),
+    }
+    period.isProvisional ||= estimate.serviceEstimates.some(
+      (row) => row.provenance?.isProvisional === true,
+    )
+    noteWorstTiers(period.worstTiers, estimate.serviceEstimates)
+    periods.set(time, period)
+  }
+  return [...periods]
+    .sort(([timeOne], [timeTwo]) => timeOne - timeTwo)
+    .map(([time, { isProvisional, worstTiers }]) => ({
+      timestamp: new Date(time),
+      isProvisional,
+      worstTiers: [...worstTiers.values()],
+    }))
 }

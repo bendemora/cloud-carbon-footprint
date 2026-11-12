@@ -175,6 +175,14 @@ export const createRouter = (config?: CCFConfig) => {
    *     tags:
    *     - Grid Intensity
    *     description: Reports, for every region of the cloud providers whose estimates are included, the electricity grid the region is on and what each configured grid intensity source can deliver (its own zone, the best quality tier for the last 24 hours, 30 days and 12 months, the licence state, any error and the attribution text). It is the report the grid-intensity-doctor command prints. It calls no data endpoint of any source.
+   *     parameters:
+   *      - name: cachedEstimates
+   *        in: query
+   *        schema:
+   *          type: boolean
+   *          default: false
+   *        description: Set to true to add cachedEstimates to the report, the number of periods the estimates cache holds for each grouping and how many of them are provisional. It is left out by default because counting reads the whole estimates cache. The request fails with 500 when the cache cannot be read.
+   *        required: false
    *     responses:
    *       200:
    *         description: Success

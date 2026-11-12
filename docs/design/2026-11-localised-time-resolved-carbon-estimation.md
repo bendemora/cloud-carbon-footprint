@@ -345,6 +345,7 @@ Implementation notes (Phase 1b, recorded as the code landed in PRs #23, #25 and 
 - The error is the source's `probe()` answer when it is not reachable or not authenticated, joined with the reason the resolver has stopped the zone's fetches. The resolver now remembers that reason, and keeps each source's probe answer for the capability TTL so that the endpoint does not call a source on every request (`GridIntensityResolver.sourceViews`). The API server reports on the resolver its estimates use, so it shows the failures they have met; the command starts from nothing each time.
 - Each region carries `gridZoneId`: its zone in the grid zone registry (section 5.5), or null when it has none. The doctor prints it in a `Grid zone` column. Until ADR 0026 the report instead carried the state of the Electricity Maps v3 lookup, and each region's Electricity Maps zone, while `ELECTRICITY_MAPS_TOKEN` was set.
 - Verified by running the command on 2026-11-10: with the default configuration it lists 171 regions (39 AWS, 51 GCP, 81 Azure), all tier D from the static source. Run again on 2026-11-12 after ADR 0026: the same 171 regions, 134 of them with a grid zone and 37 without. Lookback, late data, the other licence states and errors are tested with a fake source and have not been seen with a live one.
+- Since the refresh of ADR 0025 was built, the doctor also says, under the table, how many periods the estimates cache holds for each grouping and how many of them are provisional. For that it reads the estimates cache, which the report itself does not, and it prints nothing more when nothing is cached. The endpoint adds the same counts, as `cachedEstimates`, only when the request carries `cachedEstimates=true`, because counting reads the whole cache. The count belongs to `packages/app`, not to the report type in `grid-intensity`. Run on 2026-11-12 with a cache file of five days made by hand, the doctor printed `day: 5 cached periods, 4 provisional`.
 
 ### 6.6 Persistence
 
@@ -468,7 +469,7 @@ Suggested PR granularity inside a phase: interfaces and static source; one sourc
   - 1b, done (PRs #23, #25 and #26): the doctor command and `GET /grid-intensity/capabilities`. Neither needs external credentials. Section 6.5 records how they were built.
   - 1c, cancelled on 2026-11-12 (ADR 0026): the Electricity Maps v4 source. The v3 lookup the fork inherited was removed at the same time, and with it the midnight-sample defect (section 3.3). The acceptance criterion that waited for 1c, a daily run on a real account that shows tier B, is now part of Phase 2's.
 - Phase 2 is next. The open sources need no paid data, and the first of them will be the first live data to go through the resolver, which so far has only been exercised by the static source and a fake one.
-- The row fields of ADR 0024 and the marker of ADR 0025 are built, so every row estimated from live data carries both. The replace and refresh operations of ADR 0025 are not built yet.
+- The row fields of ADR 0024 and the marker of ADR 0025 are built, so every row estimated from live data carries both. The replace and refresh operations of ADR 0025 are built too: each cache manager can replace the rows of given periods and providers, and the `refresh-estimates` command estimates the provisional cached periods of a date range again. The second mode of the refresh, which re-prices rows from their stored fields, is not built. The ADR's implementation notes say what was built, where it adds to the decision and what was not verified.
 - Phases 3 to 8 are not started.
 
 ## 13. Testing
@@ -508,7 +509,7 @@ Items to confirm against live services before the phase that depends on them. Ea
 Found during Phase 1 and left for later. Listed here so that it is not lost in pull request descriptions.
 
 - Alibaba Cloud and on-premise rows, and rows from the cloud usage APIs (billing data turned off), carry no provenance (PR #12). Needed before the export in Phase 7.
-- `LocalCacheManager` rewrites the cache file in place, so a write that fails part way leaves a mixed file (PR #15, upstream behaviour). ADR 0025's replace operation closes it.
+- `LocalCacheManager` rewrote the cache file in place, so a write that failed part way left a mixed file (PR #15, upstream behaviour). Closed with ADR 0025's replace operation: the file is now written to a temporary file next to it, which is then renamed over it.
 - `GoogleCloudCacheManager` and `writeToFile` do not wait for `drain` on the GCS write stream, so a slow upload buffers in memory (PR #15, upstream behaviour).
 - `DataPersistenceAndCaching.md` says `REACT_APP_PAGE_LIMIT` defaults to 1000; the client and `ConfigurationsGlossary.md` say 50000 (PR #15, rechecked 2026-11-10).
 - Whether `estimateCo2` should treat a factor of 0 as 0 instead of as missing (PRs #13 and #18), and the 0 for GCP `europe-north2` in the carbon-free-energy table (section 6.1). Both change estimates, so they are decided with the model version in section 9.

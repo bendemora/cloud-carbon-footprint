@@ -118,19 +118,27 @@ export const EmissionsApiMiddleware = async function (
 
 /**
  * Handles the grid intensity capability report: what each configured source
- * can deliver for each provider region.
+ * can deliver for each provider region. With cachedEstimates=true the report
+ * also says how many periods the estimates cache holds for each grouping and
+ * how many of them are provisional. That is left out otherwise, because
+ * counting reads the whole cache.
  *
  * @async
+ * @param {express.Request} req - The Express request object containing the request parameters.
  * @returns A response object with the report the grid-intensity-doctor command prints.
  */
 export const GridIntensityCapabilitiesApiMiddleware = async function (
-  _req: express.Request,
+  req: express.Request,
   res: express.Response,
 ): Promise<void> {
   apiLogger.info(`Grid intensity capabilities API request started`)
   const footprintApp = new App()
   try {
-    res.json(await footprintApp.getGridIntensityCapabilities())
+    res.json(
+      await footprintApp.getGridIntensityCapabilities({
+        cachedEstimates: req.query.cachedEstimates?.toString() === 'true',
+      }),
+    )
   } catch (e) {
     apiLogger.error(`Unable to process grid intensity capabilities request.`, e)
     res.status(500).send('Internal Server Error')

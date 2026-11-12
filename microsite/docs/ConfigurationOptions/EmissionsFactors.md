@@ -37,7 +37,7 @@ If your configuration still sets `ELECTRICITY_MAPS_TOKEN`:
 
 - The variable is ignored. CCF logs one warning that says so the first time it resolves a grid emissions factor: for estimates, recommendations and lookup tables, and when the doctor below runs. A request answered wholly from the estimates cache resolves nothing and logs nothing.
 - Estimates use the sources in `GRID_INTENSITY_SOURCES`, which means the default emissions factors unless you have configured another source. Expect the figures for regions that had an Electricity Maps value to change.
-- Estimates already in your cache are not touched, and CCF does not estimate a cached period again by itself. A cached row that was made with an Electricity Maps value keeps it until you delete the cache; see [Data Persistence and Caching](DataPersistenceAndCaching.md). Rows this fork cached name the source `electricitymaps-v3` in their `provenance`. Rows cached by upstream CCF carry no provenance, so nothing marks them.
+- Estimates already in your cache are not touched, and CCF does not estimate a cached period again by itself. A cached row that was made with an Electricity Maps value keeps it until you delete the cache; see [Data Persistence and Caching](DataPersistenceAndCaching.md). The `refresh-estimates` command described there does not replace such a row with one from the default factors: it keeps cached rows whose quality tier is better than that of the new estimate, and the default factors have the lowest tier. That holds for rows this fork cached, which carry a tier. Rows that upstream CCF cached carry none, and a refresh with `--all` replaces them. Rows this fork cached name the source `electricitymaps-v3` in their `provenance`. Rows cached by upstream CCF carry no provenance, so nothing marks them.
 - Remove the variable from your `.env` file, and from your Docker secrets if you set it there, to stop the warning.
 
 One thing is unchanged. The default factors for Google Cloud regions are the figures Google publishes, and Google says it calculates them from Electricity Maps data. CCF reads them as constants and calls nothing.
@@ -76,10 +76,21 @@ It prints one row per region and source. With the default configuration the only
 
 Below the table the doctor lists the attribution text of each source.
 
-The API serves the same report as JSON at `GET /api/grid-intensity/capabilities`.
+After that it says how many periods the estimates cache holds for each grouping, and how many of them are provisional (see the notes below), when anything is cached:
+
+```
+Cached estimates:
+  day: 14 cached periods, 3 provisional
+  month: 1 cached period, 0 provisional
+A provisional period holds rows whose grid intensity can still improve. The refresh-estimates command estimates such periods again.
+```
+
+For this count, and for nothing else, the doctor reads the estimates cache that `CACHE_MODE` selects. With the local file cache those are the cache files of the directory it runs in, `packages/cli`, unless `CCF_CACHE_PATH` names others. With `CACHE_MODE=GCS` or `MONGODB` the count needs access to the bucket or the database. The table does not: when the doctor cannot read the cache it still prints the table, and says why under it.
+
+The API serves the same report as JSON at `GET /api/grid-intensity/capabilities`. It adds the cached periods, as `cachedEstimates`, only when the request carries `cachedEstimates=true`, because counting them reads the whole estimates cache.
 
 ### Additional Notes
 
 - A region that no configured source covers, or whose source has no data for the period, uses the default emissions factors. The `provenance` of each row and the doctor both show when that is the case.
-- A row whose factor could still improve carries `isProvisional: true` in its `provenance`. That happens when a source had not published the whole usage period yet, when its values were preliminary, or when a source that comes earlier in `GRID_INTENSITY_SOURCES` could not be reached and a later one answered. The quality tier is the one the row has now. CCF does not estimate a cached period again by itself, so a provisional row stays as it is until you delete the cache. With the default configuration no row is provisional.
+- A row whose factor could still improve carries `isProvisional: true` in its `provenance`. That happens when a source had not published the whole usage period yet, when its values were preliminary, or when a source that comes earlier in `GRID_INTENSITY_SOURCES` could not be reached and a later one answered. The quality tier is the one the row has now. CCF does not estimate a cached period again by itself, so a provisional row stays as it is until you run the `refresh-estimates` command, which estimates the provisional cached periods of a date range again and replaces them; see [Refreshing Cached Estimates](DataPersistenceAndCaching.md#refreshing-cached-estimates). The doctor above shows how many cached periods are provisional. With the default configuration no row is provisional.
 - Every source has a licence. Its attribution text is listed by the doctor, and a source with a commercial, non-commercial or custom licence is not used until you acknowledge it.

@@ -10,6 +10,7 @@ import {
   ServiceData,
 } from '@cloud-carbon-footprint/common'
 import cache from '../Cache'
+import { getMissingDates } from '../common/helpers'
 import { EstimationRequest } from '../CreateValidRequest'
 import DurationConstructor = moment.unitOfTime.DurationConstructor
 import LocalCacheManager from '../LocalCacheManager'
@@ -17,16 +18,19 @@ import LocalCacheManager from '../LocalCacheManager'
 let mockSetEstimates: jest.Mock
 let mockGetEstimates: jest.Mock
 let mockGetMissingDates: jest.Mock
+let mockReplaceEstimates: jest.Mock
 
 jest.mock('../LocalCacheManager', () => {
   return jest.fn().mockImplementation(() => {
     mockSetEstimates = jest.fn()
     mockGetEstimates = jest.fn()
     mockGetMissingDates = jest.fn()
+    mockReplaceEstimates = jest.fn()
     return {
       getEstimates: mockGetEstimates,
       setEstimates: mockSetEstimates,
       getMissingDates: mockGetMissingDates,
+      replaceEstimates: mockReplaceEstimates,
     }
   })
 })
@@ -394,7 +398,7 @@ describe('Cache', () => {
     expect(mockSetEstimates).not.toHaveBeenCalled()
   })
 
-  describe.skip('populates missing dates', () => {
+  describe('populates missing dates', () => {
     type TestCase = [string, EstimationRequest, MockRequestDateRanges]
     type MockEstimates = { [grouping: string]: EstimationResult[] }
     type MockRequests = { [grouping: string]: EstimationRequest }
@@ -406,6 +410,15 @@ describe('Cache', () => {
       originalFunction = jest.fn().mockReturnValue([])
       propertyDescriptor = { value: originalFunction }
     })
+
+    /**
+     * Answers for the cache manager as the local and bucket managers do:
+     * with the dates of the request that the cached estimates do not hold.
+     */
+    const missingFrom =
+      (cached: EstimationResult[]) =>
+      async (request: EstimationRequest, grouping: string) =>
+        getMissingDates(cached, request, grouping)
 
     // Mocked Estimates
     const cachedEstimates: MockEstimates = {
@@ -474,48 +487,53 @@ describe('Cache', () => {
       },
     }
 
+    // One request for each run of adjacent missing dates: from the first
+    // date of the run to the end of the period of its last date.
     const expectedRequestRangesByDay: MockRequestDateRanges = [
       {
-        start: moment.utc('2019-12-31').toDate(),
-        end: moment.utc('2020-01-01').endOf('day').toDate(),
+        start: new Date('2019-12-31T00:00:00.000Z'),
+        end: new Date('2020-01-01T23:59:59.999Z'),
       },
       {
-        start: moment.utc('2020-01-03').toDate(),
-        end: moment.utc('2020-01-05').endOf('day').toDate(),
+        start: new Date('2020-01-03T00:00:00.000Z'),
+        end: new Date('2020-01-05T23:59:59.999Z'),
       },
     ]
 
-    // Moment's weeks start on Mondays
+    // Weeks start on Mondays (ISO weeks), so the first missing week starts
+    // before the start date of the request, a Sunday. The window of a run
+    // ends on a Saturday all the same: the decorator takes the end of the
+    // week from moment's locale week, which starts on a Sunday. The Sunday
+    // that ends the last week of a run is therefore not asked for.
     const expectedRequestRangesByWeek: MockRequestDateRanges = [
       {
-        // Earlier than start date since week starts on Monday
-        start: moment.utc('2020-11-30').toDate(),
-        end: moment.utc('2020-11-30').endOf('week').toDate(),
+        start: new Date('2020-11-30T00:00:00.000Z'),
+        end: new Date('2020-12-05T23:59:59.999Z'),
       },
       {
-        start: moment.utc('2020-12-21').toDate(),
-        end: moment.utc('2020-12-28').endOf('week').toDate(),
+        start: new Date('2020-12-21T00:00:00.000Z'),
+        end: new Date('2021-01-02T23:59:59.999Z'),
       },
     ]
 
     const expectedRequestRangesByMonth: MockRequestDateRanges = [
       {
-        start: moment.utc('2020-11-01').toDate(),
-        end: moment.utc('2020-11-01').endOf('month').toDate(),
+        start: new Date('2020-11-01T00:00:00.000Z'),
+        end: new Date('2020-11-30T23:59:59.999Z'),
       },
     ]
 
     const expectedRequestRangesByQuarter: MockRequestDateRanges = [
       {
-        start: moment.utc('2020-07-01').toDate(),
-        end: moment.utc('2020-07-01').endOf('quarter').toDate(),
+        start: new Date('2020-07-01T00:00:00.000Z'),
+        end: new Date('2020-09-30T23:59:59.999Z'),
       },
     ]
 
     const expectedRequestRangesByYear: MockRequestDateRanges = [
       {
-        start: moment.utc('2021-01-01').toDate(),
-        end: moment.utc('2021-01-01').endOf('year').toDate(),
+        start: new Date('2021-01-01T00:00:00.000Z'),
+        end: new Date('2021-12-31T23:59:59.999Z'),
       },
     ]
 
@@ -536,11 +554,14 @@ describe('Cache', () => {
         expectedRequestDateRanges: MockRequestDateRanges,
       ) => {
         //setup
+        mockGetMissingDates.mockImplementationOnce(
+          missingFrom(cachedEstimates[grouping]),
+        )
         mockGetEstimates.mockResolvedValueOnce(cachedEstimates[grouping])
 
         //run
         cacheDecorator({}, 'propertyTest', propertyDescriptor)
-        await propertyDescriptor.value(rawRequest)
+        const estimationResult = await propertyDescriptor.value(rawRequest)
 
         //assert
         const expectedRequestArguments = expectedRequestDateRanges.map(
@@ -555,6 +576,11 @@ describe('Cache', () => {
         )
         // Expect each missing date to be called on getEstimates (decorated function) as a separate request
         expect(originalFunction.mock.calls).toEqual(expectedRequestArguments)
+        expect(mockGetMissingDates).toHaveBeenCalledWith(rawRequest, grouping)
+        // The dates that were asked for had no estimates, so nothing is
+        // written and the answer is what the cache holds.
+        expect(mockSetEstimates).not.toHaveBeenCalled()
+        expect(estimationResult).toEqual(cachedEstimates[grouping])
       },
     )
 
@@ -606,6 +632,172 @@ describe('Cache', () => {
           },
         ],
       ])
+    })
+
+    it('writes the estimates of every run of missing dates to the cache in one call, and answers with what the cache then holds', async () => {
+      //setup
+      const rawRequest = rawRequests.day
+      mockGetMissingDates.mockImplementationOnce(
+        missingFrom(cachedEstimates.day),
+      )
+      const firstRun = buildFootprintEstimates(
+        '2019-12-31',
+        2,
+        dummyServiceEstimate,
+      )
+      const secondRun = buildFootprintEstimates(
+        '2020-01-03',
+        3,
+        dummyServiceEstimate,
+      )
+      originalFunction
+        .mockResolvedValueOnce(firstRun)
+        .mockResolvedValueOnce(secondRun)
+      const heldByTheCache = buildFootprintEstimates(
+        '2019-12-31',
+        6,
+        dummyServiceEstimate,
+      )
+      mockGetEstimates.mockResolvedValueOnce(heldByTheCache)
+
+      //run
+      cacheDecorator({}, 'propertyTest', propertyDescriptor)
+      const estimationResult = await propertyDescriptor.value(rawRequest)
+
+      //assert
+      expect(originalFunction).toHaveBeenCalledTimes(2)
+      expect(mockSetEstimates).toHaveBeenCalledTimes(1)
+      expect(mockSetEstimates).toHaveBeenCalledWith(
+        [...firstRun, ...secondRun],
+        'day',
+      )
+      expect(estimationResult).toEqual(heldByTheCache)
+    })
+
+    it('caches a missing date that has no estimates as an empty result, so that it is not asked for again', async () => {
+      //setup
+      mockGetMissingDates.mockImplementationOnce(
+        missingFrom(cachedEstimates.day),
+      )
+      // The first run has estimates for one of its two dates, the second
+      // for none of its three.
+      const estimated = buildFootprintEstimates(
+        '2020-01-01',
+        1,
+        dummyServiceEstimate,
+      )
+      originalFunction.mockResolvedValueOnce(estimated)
+      mockGetEstimates.mockResolvedValueOnce([])
+
+      //run
+      cacheDecorator({}, 'propertyTest', propertyDescriptor)
+      await propertyDescriptor.value(rawRequests.day)
+
+      //assert
+      expect(mockSetEstimates).toHaveBeenCalledWith(
+        [
+          ...buildFootprintEstimates('2019-12-31', 1),
+          ...estimated,
+          ...buildFootprintEstimates('2020-01-03', 3),
+        ],
+        'day',
+      )
+    })
+
+    it('hands the other fields of the request on to each request for missing dates', async () => {
+      //setup
+      const rawRequest: EstimationRequest = {
+        ...rawRequests.day,
+        cloudProviderToSeed: 'AWS',
+        accounts: ['account-1'],
+      }
+      mockGetMissingDates.mockImplementationOnce(
+        missingFrom(cachedEstimates.day),
+      )
+      mockGetEstimates.mockResolvedValueOnce(cachedEstimates.day)
+
+      //run
+      cacheDecorator({}, 'propertyTest', propertyDescriptor)
+      await propertyDescriptor.value(rawRequest)
+
+      //assert
+      expect(originalFunction.mock.calls).toEqual(
+        expectedRequestRangesByDay.map((range) => [
+          {
+            startDate: range.start,
+            endDate: range.end,
+            ignoreCache: false,
+            groupBy: GroupBy.day,
+            cloudProviderToSeed: 'AWS',
+            accounts: ['account-1'],
+          },
+        ]),
+      )
+    })
+
+    it('calls the original function on the object it decorates, which for a method is the prototype', async () => {
+      //setup
+      const target = { name: 'the prototype' }
+      mockGetMissingDates.mockResolvedValueOnce([moment.utc('2020-01-03')])
+      mockGetEstimates.mockResolvedValueOnce([])
+
+      //run
+      cacheDecorator(target, 'propertyTest', propertyDescriptor)
+      await propertyDescriptor.value.call(
+        { name: 'an instance' },
+        {
+          ...rawRequests.day,
+        },
+      )
+
+      //assert
+      expect(originalFunction.mock.contexts).toEqual([target])
+    })
+
+    it('answers with a cached period that holds provisional rows as it is: a read never estimates it again or replaces it', async () => {
+      //setup
+      const provisionalEstimates: EstimationResult[] = buildFootprintEstimates(
+        '2020-01-02',
+        1,
+        [
+          {
+            ...dummyServiceEstimate[0],
+            provenance: {
+              sourceId: 'live',
+              zoneId: 'GB',
+              granularity: 'day',
+              basis: 'location-consumption',
+              factorType: 'direct',
+              isEstimated: true,
+              licenceId: 'CC-BY-4.0',
+              qualityTier: 'C',
+              gCO2ePerKWh: 100,
+              modelVersion: 'unversioned',
+              isProvisional: true,
+            },
+          },
+        ],
+      )
+      const rawRequest: EstimationRequest = {
+        startDate: moment.utc('2020-01-02').toDate(),
+        endDate: moment.utc('2020-01-02').toDate(),
+        ignoreCache: false,
+        groupBy: GroupBy.day,
+      }
+      mockGetMissingDates.mockImplementationOnce(
+        missingFrom(provisionalEstimates),
+      )
+      mockGetEstimates.mockResolvedValueOnce(provisionalEstimates)
+
+      //run
+      cacheDecorator({}, 'propertyTest', propertyDescriptor)
+      const estimationResult = await propertyDescriptor.value(rawRequest)
+
+      //assert
+      expect(estimationResult).toEqual(provisionalEstimates)
+      expect(originalFunction).not.toHaveBeenCalled()
+      expect(mockSetEstimates).not.toHaveBeenCalled()
+      expect(mockReplaceEstimates).not.toHaveBeenCalled()
     })
   })
 })

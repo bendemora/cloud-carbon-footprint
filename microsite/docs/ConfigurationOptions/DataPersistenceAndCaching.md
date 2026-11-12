@@ -133,7 +133,7 @@ _Filtering is only supported via the API and is not yet supported on the client.
 
 ### Ensure Real-Time Estimates
 
-In order to make local development a pleasant experience with a quick feedback loop, we have a cache file that is automatically generated. If you would like to see up-to-date estimates, you will have to delete `packages/cli/estimates.cache.json` and/or `packages/api/estimates.cache.json`. If you are using MongoDB or GCS to store estimates, you will either have to delete the collection or the estimates file in the storage bucket respectively. Depending on how much usage you have, it could take several minutes to fetch up-to-date estimates and regenerate the cache file.
+In order to make local development a pleasant experience with a quick feedback loop, we have a cache file that is automatically generated. If you would like to see up-to-date estimates, you will have to delete `packages/cli/estimates.cache.json` and/or `packages/api/estimates.cache.json`. If you are using MongoDB or GCS to store estimates, you will either have to delete the collection or the estimates file in the storage bucket respectively. Depending on how much usage you have, it could take several minutes to fetch up-to-date estimates and regenerate the cache file. To estimate the cached periods of a date range again without deleting the cache, see [Refreshing Cached Estimates](#refreshing-cached-estimates).
 
 There is also an optional boolean parameter that can be set to ignore setting estimates to a cache:
 
@@ -171,3 +171,71 @@ By default, the script will fetch estimates using a single request.
 If you choose to split your requests, you will be asked an optional follow-up question of how many days to fetch per request. This will allow it to fetch the provided number of days or to fetch a default of one day per request until the date range is covered.
 
 We recommend using this method when dealing with a large amount of usage data within a date range that may cause issues when running your app, especially for historical data, as described in the [Performance Considerations](PerformanceConsiderations.md) section.
+
+## Refreshing Cached Estimates
+
+CCF does not estimate a cached period again by itself. There are two reasons to do it:
+
+- The period is provisional. A row is provisional when its grid emissions factor can still improve: the grid intensity source had not published the whole period yet, its values were preliminary, or a source could not be reached. Such a row carries `isProvisional: true` in its `provenance`; see [Emissions Factors](EmissionsFactors.md#additional-notes). A period is provisional when at least one of its rows is. With the default configuration no row is provisional.
+- Billing data for the period arrived after the period was cached.
+
+The `refresh-estimates` command estimates cached periods of a date range again from billing data and replaces them in the cache. By default it takes the provisional periods only. Before running it, set the configuration that estimates need in a `.env` file in the CLI directory, as for seeding. From the root directory, run:
+
+```sh
+yarn workspace @cloud-carbon-footprint/cli refresh-estimates --startDate 2026-11-01 --endDate 2026-11-07
+```
+
+| Option | Default | Notes |
+| --- | --- | --- |
+| `--startDate`, `-s` | required | The first day of the range, in the format the other commands take. |
+| `--endDate`, `-e` | required | The last day of the range. A period that starts on it is in the range. |
+| `--groupBy`, `-g` | `day` | The grouping to refresh: `day`, `week`, `month`, `quarter` or `year`. Each grouping has a cache of its own. |
+| `--all`, `-a` | off | Refresh every cached period in the range, not only the provisional ones. Use it for late billing data, or after adding a grid intensity source. |
+| `--cloudProviderToSeed` | every provider | Estimate one cloud provider only: `aws`, `gcp` or `azure`. |
+
+It prints what it did, for example:
+
+```
+Refresh of the cached estimates grouped by day
+Cache: file /ccf/packages/cli/estimates.cache.day.json
+Range: periods that start from 2026-11-01T00:00:00.000Z to 2026-11-07T00:00:00.000Z
+Refreshing: the cached periods in the range that hold provisional rows
+Cached periods in the range: 7
+Provisional before: 3
+Estimation requests, one for each run of adjacent periods: 2
+Periods refreshed: 2
+Periods left alone because the new estimate had no rows: 1
+Periods kept because the new estimate had a worse quality tier: 0
+Provisional after: 1
+Failed runs: 0
+```
+
+What it does:
+
+- It looks at the cached periods of the grouping that start in the range. A period is known by its start, so a week or a month is in the range when its first day is.
+- It estimates adjacent periods together, in one request. The output calls such a group a run.
+- For each period it replaces the rows of the cloud providers that the new estimate has rows for. Rows of a provider that returned nothing stay, so a provider that is no longer configured keeps its cached rows. A period that the new estimate has no rows for at all is left as it is.
+- It does not put worse rows in the place of better ones. When a grid intensity source cannot be reached, a new estimate falls back to a lower-ranked source or to the default factors, so a refresh during an outage would make the cache worse. Where the new rows of a cloud provider have a worse quality tier than its cached rows in some region, the cached rows of that provider stay for that period, and the command counts the period as kept. Run the refresh again later. If you want the worse rows on purpose, after removing a source for example, delete those periods from the cache, or delete the cache, and request the dates again.
+- A run that fails, because a billing query fails for example, leaves its periods as they were. The other runs go ahead. The command lists the failed runs and ends with exit code 1, so that a scheduled job notices.
+
+What it costs:
+
+- One billing request for each configured cloud provider and each run of adjacent periods. That is what seeding the cache costs for the same dates. With billing data on AWS or Google Cloud it is a query on Athena or BigQuery, which is billed.
+- A run is one request, however long it is. For a long range, refresh several shorter ranges one after the other, as [Fetch Methods](#fetch-methods) describes for seeding.
+
+What it never does:
+
+- It never fills gaps. A period in the range that is not cached is not estimated. The next request for it does that.
+- It never runs on a read. A request to `/footprint` is answered from the cache as before, also when a cached period is provisional.
+
+Which cache it works on:
+
+- The cache that `CACHE_MODE` selects. The second line of the output names the file, the bucket object or the MongoDB collection.
+- With the local file cache it works on the cache files of the directory it runs in, which is `packages/cli`, as seeding does. To refresh the cache files of the API, set `CCF_CACHE_PATH` to their path and name without the grouping, for example `CCF_CACHE_PATH=../api/estimates.cache`.
+- With MongoDB a period is replaced by deleting its rows and inserting the new ones. If that fails between the two steps, the period is missing from the cache and the next request estimates it again.
+
+The [grid intensity doctor](EmissionsFactors.md#checking-what-your-configuration-can-deliver) shows how many cached periods are provisional.
+
+Still to come: a second way to refresh, which works a row out again from the energy and the embodied emissions stored with it and reads no billing data. It is meant for long histories and is not built yet.
+
+How this was checked: the command was run with the default configuration, with no cache and with a small cache file made by hand, and its tests replace rows in real cache files with estimates that the tests supply. It has not been run against a cloud provider's billing data. With MongoDB and Google Cloud Storage it has been tested against stand-ins for the database and the bucket only.
