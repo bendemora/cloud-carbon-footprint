@@ -32,6 +32,7 @@ describe('grid zone registry', () => {
     ['a provider the registry does not cover', 'ON_PREMISE', 'eu-west-2'],
     ['a provider name every object inherits', 'toString', 'name'],
     ['a name every object inherits', 'AWS', 'constructor'],
+    ["a region in another case than the provider's table", 'AZURE', 'eastus'],
   ] as const)('has no grid zone for %s (%s %s)', (_case, provider, region) => {
     expect(gridZoneOf(provider as CloudProvider, region)).toBeNull()
   })
@@ -72,8 +73,9 @@ describe('grid zone registry', () => {
       ...GRID_ZONES,
       AWS: { ...GRID_ZONES.AWS, 'eu-west-2': 'IE' },
     }
-    expect(fingerprintOf(canonical(reordered))).toBe(FINGERPRINTS[1])
-    expect(fingerprintOf(canonical(remapped))).not.toBe(FINGERPRINTS[1])
+    const recorded = FINGERPRINTS[GRID_ZONE_REGISTRY_VERSION]
+    expect(fingerprintOf(canonical(reordered))).toBe(recorded)
+    expect(fingerprintOf(canonical(remapped))).not.toBe(recorded)
   })
 })
 

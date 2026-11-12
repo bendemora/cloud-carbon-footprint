@@ -65,8 +65,10 @@ const createDefaultResolver = (): GridIntensityResolver => {
   defaultStore = createIntensityStore(config, ccfConfig.MONGODB, logger)
   const sources: GridIntensitySource[] = []
   for (const id of config.SOURCES ?? [STATIC_SOURCE_ID]) {
-    const create = SOURCE_FACTORIES[id]
-    if (create) sources.push(create())
+    // An id is a configured string: only the table's own entries count, so
+    // that 'constructor' is an unknown source and not an inherited function.
+    if (Object.hasOwn(SOURCE_FACTORIES, id))
+      sources.push(SOURCE_FACTORIES[id]())
     else
       logger.warn(
         `Unknown grid intensity source '${id}' in GRID_INTENSITY_SOURCES is ignored. Available: ${Object.keys(SOURCE_FACTORIES).join(', ')}.`,

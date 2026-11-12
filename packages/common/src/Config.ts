@@ -191,10 +191,37 @@ const REMOVED_SETTINGS: { [name: string]: string } = {
     'Electricity Maps is no longer called (ADR 0026): grid intensity comes from the sources listed in GRID_INTENSITY_SOURCES, which by default are the static annual factors.',
 }
 
-const removedSettingWarnings = (): string[] =>
+const warningsForRemovedSettings = (
+  isSet: (name: string) => boolean,
+): string[] =>
   Object.entries(REMOVED_SETTINGS)
-    .filter(([name]) => getEnvVar(name))
+    .filter(([name]) => isSet(name))
     .map(([name, reason]) => `${name} is set but is no longer read. ${reason}`)
+
+const removedSettingWarnings = (): string[] =>
+  warningsForRemovedSettings((name) => !!getEnvVar(name))
+
+/**
+ * A configuration object handed to setConfig() or createRouter() was not
+ * built from the environment, so getConfig() has not looked for removed
+ * settings in it. When it carries one as a property of its own, a copy with
+ * the warning is returned; otherwise the object itself.
+ */
+export const withRemovedSettingWarnings = (config: CCFConfig): CCFConfig => {
+  const own = config as unknown as Record<string, unknown>
+  // Not Object.hasOwn: the client compiles this file with its own tsconfig,
+  // whose lib does not have it.
+  const found = warningsForRemovedSettings(
+    (name) => Object.prototype.hasOwnProperty.call(own, name) && !!own[name],
+  )
+  if (!found.length) return config
+  return {
+    ...config,
+    REMOVED_SETTING_WARNINGS: [
+      ...new Set([...(config.REMOVED_SETTING_WARNINGS ?? []), ...found]),
+    ],
+  }
+}
 
 const getConfig = (): CCFConfig => ({
   AWS: {
