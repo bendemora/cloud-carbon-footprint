@@ -3,26 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {
-  configLoader,
-  getEmissionsFactors,
-  Logger,
-} from '@cloud-carbon-footprint/common'
-import {
-  GridIntensityCapabilityReporter,
-  REPORT_USAGE_GRANULARITY,
-} from './CapabilityReporter'
-import {
-  addPeriod,
-  addUtcMonths,
-  Period,
-  startOfPeriod,
-  usageGranularityOf,
-} from './granularity'
+import { configLoader, Logger } from '@cloud-carbon-footprint/common'
+import { GridIntensityCapabilityReporter } from './CapabilityReporter'
+import { addPeriod, addUtcMonths, Period, startOfPeriod } from './granularity'
 import {
   GridIntensityResolver,
   NoIntensityAvailableError,
-  ResolverLogger,
 } from './GridIntensityResolver'
 import {
   appliedStaticFactor,
@@ -31,17 +17,15 @@ import {
   StaticFactorTables,
   StaticSource,
 } from './sources/StaticSource'
-import { deriveQualityTier, STATIC_SOURCE_ID } from './qualityTier'
+import { STATIC_SOURCE_ID } from './qualityTier'
 import { createIntensityStore } from './stores/createIntensityStore'
 import { gramsToTonnes, tonnesToGrams } from './units'
 import {
   CapabilityReporter,
   CloudProvider,
-  Granularity,
   GridIntensitySource,
   IntensityResolver,
   IntensityStore,
-  LegacyElectricityMapsState,
   Provenance,
   ProviderRegion,
 } from './types'
@@ -55,18 +39,7 @@ export interface EmissionsFactorsResolution {
 export interface ResolveEmissionsFactorsOptions {
   /** A resolver to use instead of the default one built from configuration. */
   resolver?: IntensityResolver
-  /**
-   * The provider's region to Electricity Maps zone map. While
-   * ELECTRICITY_MAPS_TOKEN is set, the existing v3 lookup in
-   * packages/common is used first, so deployments with a token keep today's
-   * behaviour until the v4 source replaces it.
-   */
-  legacyElectricityMapsZones?: { [region: string]: string | null }
-  /** For warnings from the legacy lookup. */
-  logger?: ResolverLogger
 }
-
-export const LEGACY_ELECTRICITY_MAPS_SOURCE_ID = 'electricitymaps-v3'
 
 /*
  * The static tables the default resolver's StaticSource reads. Each call
@@ -85,6 +58,10 @@ const createDefaultResolver = (): GridIntensityResolver => {
   const ccfConfig = configLoader()
   const config = ccfConfig.GRID_INTENSITY ?? {}
   const logger = new Logger('grid-intensity')
+  // A setting this fork has removed changes the factors a deployment gets;
+  // say so wherever grid intensity is first resolved.
+  for (const warning of ccfConfig.REMOVED_SETTING_WARNINGS ?? [])
+    logger.warn(warning)
   defaultStore = createIntensityStore(config, ccfConfig.MONGODB, logger)
   const sources: GridIntensitySource[] = []
   for (const id of config.SOURCES ?? [STATIC_SOURCE_ID]) {
@@ -149,115 +126,22 @@ export const usagePeriod = (start: Date, grouping: string): Period => {
 }
 
 /**
- * Yesterday in UTC. For estimates with no usage period of their own
- * (recommendations, lookup tables), which used the current hour before.
+ * Yesterday in UTC: the period for estimates with no usage period of their
+ * own (recommendations, lookup tables).
  */
 export const lastFullUtcDay = (now: Date = new Date()): Period => {
   const end = startOfPeriod(now, 'day')
   return { start: new Date(end.getTime() - 24 * 3600 * 1000), end }
 }
 
-let legacyLogger: ResolverLogger | undefined
-
 /**
- * How good the legacy lookup's one hourly sample is for a usage period: the
- * value itself for an hour of usage, an estimate for anything longer.
- */
-const legacyQuality = (
-  usageGranularity: Granularity,
-): Pick<Provenance, 'isEstimated' | 'qualityTier'> => {
-  const isEstimated = usageGranularity !== 'hour'
-  return {
-    isEstimated,
-    qualityTier: deriveQualityTier({
-      sourceId: LEGACY_ELECTRICITY_MAPS_SOURCE_ID,
-      isEstimated,
-      intensityGranularity: 'hour',
-      usageGranularity,
-    }),
-  }
-}
-
-/**
- * A request to Electricity Maps failed (network error, a body that is not
- * JSON, an invalid token, or a server error). It is named so that code which
- * catches errors per account or subscription (Azure) can let it through and
- * stop the run, as AWS and GCP do.
- */
-export class ElectricityMapsRequestError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
-    super(message, options)
-    this.name = 'ElectricityMapsRequestError'
-  }
-}
-
-/** By name as well as class, in case two copies of this package are loaded. */
-export const isElectricityMapsRequestError = (error: unknown): boolean =>
-  error instanceof ElectricityMapsRequestError ||
-  (error instanceof Error && error.name === 'ElectricityMapsRequestError')
-
-/**
- * The v3 lookup as getEmissionsFactors does it today: one hourly sample at
- * the start of the period. A sample applied to a longer period is labelled
- * estimated. Null when it returned the static table (no zone for the region,
- * or a response without a value, which getEmissionsFactors warns about), so
- * the resolver decides.
- *
- * A failed request throws an ElectricityMapsRequestError, as getEmissionsFactors
- * threw before this package existed, so the run stops and nothing is written
- * to the estimates cache. Falling back instead would repeat the failing
- * request for every billing row, and the cache would keep the static rows for
- * good, because a cached day is never re-estimated.
- */
-const legacyElectricityMapsLookup = async (
-  region: string,
-  periodStart: Date,
-  periodEnd: Date,
-  staticTable: StaticFactorTable,
-  zones: { [region: string]: string | null },
-  logger: ResolverLogger,
-): Promise<EmissionsFactorsResolution | null> => {
-  const staticFactors = factorsOf(staticTable)
-  let factors: StaticFactors
-  try {
-    factors = await getEmissionsFactors(
-      region,
-      periodStart.toISOString(),
-      staticFactors,
-      zones,
-      logger as Logger,
-    )
-  } catch (error) {
-    throw new ElectricityMapsRequestError((error as Error).message, {
-      cause: error,
-    })
-  }
-  if (factors === staticFactors) return null
-  const usageGranularity = usageGranularityOf(periodStart, periodEnd)
-  return {
-    factors,
-    provenance: {
-      sourceId: LEGACY_ELECTRICITY_MAPS_SOURCE_ID,
-      zoneId: zones[region],
-      granularity: 'hour',
-      basis: 'location-consumption',
-      factorType: 'lifecycle',
-      ...legacyQuality(usageGranularity),
-      licenceId: 'custom',
-      gCO2ePerKWh: tonnesToGrams(factors[region]),
-      modelVersion: 'unversioned',
-    },
-  }
-}
-
-/**
- * Replaces getEmissionsFactors in packages/common (design section 6.1).
- * Resolves the grid intensity for a provider region over a usage period and
- * returns it in the shape estimateCo2 expects, with provenance.
+ * The adapter the provider packages call (design section 6.1). Resolves the
+ * grid intensity for a provider region over a usage period and returns it in
+ * the shape estimateCo2 expects, with provenance.
  *
  * When the static source is used, or no source can serve the region, the
- * caller's own table is returned unchanged, so estimates are identical to
- * today's.
+ * caller's own table is returned unchanged, so those estimates are the ones
+ * the static factors have always given.
  */
 export const resolveEmissionsFactors = async (
   provider: CloudProvider,
@@ -268,24 +152,8 @@ export const resolveEmissionsFactors = async (
   options: ResolveEmissionsFactorsOptions = {},
 ): Promise<EmissionsFactorsResolution> => {
   staticTables[provider] = staticTable
-  const { resolver, legacyElectricityMapsZones } = options
-  if (
-    !resolver &&
-    legacyElectricityMapsZones &&
-    configLoader().ELECTRICITY_MAPS_TOKEN
-  ) {
-    const legacy = await legacyElectricityMapsLookup(
-      region,
-      periodStart,
-      periodEnd,
-      staticTable,
-      legacyElectricityMapsZones,
-      options.logger ?? (legacyLogger ??= new Logger('grid-intensity')),
-    )
-    if (legacy) return legacy
-  }
   const activeResolver =
-    resolver ?? (defaultResolver ??= createDefaultResolver())
+    options.resolver ?? (defaultResolver ??= createDefaultResolver())
   try {
     const resolved = await activeResolver.resolve(
       provider,
@@ -339,10 +207,6 @@ export interface CapabilityReporterInput {
   regions: ProviderRegion[]
   /** Each provider's static table, as it gives it to resolveEmissionsFactors. */
   staticTables: StaticFactorTables
-  /** Each provider's region to Electricity Maps zone map, likewise. */
-  legacyElectricityMapsZones: Partial<
-    Record<CloudProvider, { [region: string]: string | null }>
-  >
 }
 
 /**
@@ -351,36 +215,14 @@ export interface CapabilityReporterInput {
  * so in a long-running process the report shows the capability answers and
  * failures that estimates have met. Call shutdownDefaultResolver() at the
  * end of a run, as after estimates.
- *
- * While ELECTRICITY_MAPS_TOKEN is set, the report also states that the
- * legacy v3 lookup is in use, as resolveEmissionsFactors applies it.
  */
 export const createCapabilityReporter = ({
   regions,
   staticTables: tables,
-  legacyElectricityMapsZones,
 }: CapabilityReporterInput): CapabilityReporter => {
   Object.assign(staticTables, tables)
   return new GridIntensityCapabilityReporter({
     resolver: (defaultResolver ??= createDefaultResolver()),
     regions,
-    legacyElectricityMaps: configLoader().ELECTRICITY_MAPS_TOKEN
-      ? {
-          state: legacyElectricityMapsState(),
-          zones: legacyElectricityMapsZones,
-        }
-      : undefined,
   })
-}
-
-const legacyElectricityMapsState = (): LegacyElectricityMapsState => {
-  const { qualityTier } = legacyQuality(REPORT_USAGE_GRANULARITY)
-  return {
-    sourceId: LEGACY_ELECTRICITY_MAPS_SOURCE_ID,
-    qualityTier,
-    message:
-      `ELECTRICITY_MAPS_TOKEN is set and there is no Electricity Maps v4 source yet, so the Electricity Maps v3 lookup is in use for every region that has an Electricity Maps zone. ` +
-      `It applies one hourly sample from the start of each usage period, which is tier ${qualityTier} for the daily and longer periods CCF produces. ` +
-      `This report does not call Electricity Maps: a zone or endpoint the token has no access to falls back to the sources listed for the region, and a failed request stops an estimation run.`,
-  }
 }

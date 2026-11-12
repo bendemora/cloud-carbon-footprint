@@ -53,4 +53,3 @@ export type {
   AccountDetails,
   AccountDetailsOrIdList,
 } from './Types'
-export * from './EmissionsFactors'

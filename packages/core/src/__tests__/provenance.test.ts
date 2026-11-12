@@ -25,7 +25,7 @@ const staticProvenance: Provenance = {
 }
 
 const liveProvenance: Provenance = {
-  sourceId: 'electricitymaps-v3',
+  sourceId: 'live-source',
   zoneId: 'GB',
   granularity: 'hour',
   basis: 'location-consumption',

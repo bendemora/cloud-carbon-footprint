@@ -46,10 +46,10 @@ components:
                 properties:
                   sourceId:
                     type: string
-                    description: For example static or electricitymaps-v3
+                    description: The id of the grid intensity source, for example static
                   zoneId:
                     type: string
-                    description: The grid zone, not the cloud availability zone
+                    description: The source's zone for the region, not the cloud availability zone. The static source names it after the region (aws:eu-west-2, for example)
                   granularity:
                     type: string
                     enum: [hour, day, month, year]
@@ -121,42 +121,27 @@ components:
           type: object
     GridIntensityCapabilitiesResponse:
       type: object
-      description: What each configured grid intensity source can deliver for each provider region. Tiers are for a day of usage, the finest usage period the estimates have.
+      description: The grid zone of each provider region, and what each configured grid intensity source can deliver for it. Tiers are for a day of usage, the finest usage period the estimates have.
       required: [generatedAt, regions]
       properties:
         generatedAt:
           type: string
           format: date-time
-        legacyElectricityMaps:
-          type: object
-          description: Present only while ELECTRICITY_MAPS_TOKEN is set and no Electricity Maps v4 source exists. The Electricity Maps v3 lookup is then applied before the sources, for every region that has an Electricity Maps zone. The report does not call Electricity Maps.
-          required: [sourceId, qualityTier, message]
-          properties:
-            sourceId:
-              type: string
-              description: The source id on the provenance of the estimates it serves (electricitymaps-v3)
-            qualityTier:
-              type: string
-              enum: [A, B, C, D]
-              description: The tier of the estimates it serves
-            message:
-              type: string
-              description: The state in plain words
         regions:
           type: array
           items:
             type: object
-            required: [provider, region, sources]
+            required: [provider, region, gridZoneId, sources]
             properties:
               provider:
                 type: string
                 enum: [AWS, GCP, AZURE]
               region:
                 type: string
-              legacyElectricityMapsZoneId:
+              gridZoneId:
                 type: string
                 nullable: true
-                description: Present only with legacyElectricityMaps. The Electricity Maps zone the v3 lookup uses for the region, or null when it has none and the region is left to the sources.
+                description: The electricity grid the region is on, from the grid zone registry (GB or US-MIDA-PJM, for example), or null when the registry has no zone for the region
               sources:
                 type: array
                 description: One entry per configured source, in GRID_INTENSITY_SOURCES order
@@ -169,7 +154,7 @@ components:
                     zoneId:
                       type: string
                       nullable: true
-                      description: The source's grid zone for the region, or null when it has none
+                      description: The source's own zone for the region, or null when it has none
                     licenceState:
                       type: string
                       enum: [open, acknowledged, needs-acknowledgement, unavailable]

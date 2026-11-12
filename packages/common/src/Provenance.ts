@@ -40,7 +40,7 @@ export type QualityTier = 'A' | 'B' | 'C' | 'D'
 
 export interface Provenance {
   sourceId: string
-  /** The grid zone the intensity came from, not the cloud availability zone. */
+  /** The source's zone that the intensity came from, not the cloud availability zone. */
   zoneId: string
   granularity: Granularity
   basis: IntensityBasis
