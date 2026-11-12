@@ -59,6 +59,14 @@ export interface IntensityPoint {
   basis: IntensityBasis
   factorType: EmissionFactorType
   isEstimated: boolean
+  /**
+   * True for a value the source will replace: a forecast, or an estimate
+   * that is not settled yet (ADR 0025). The resolver uses such a point, marks
+   * the result provisional, and keeps the point in memory for the capability
+   * TTL only: it is never written to the configured store, so a later run
+   * fetches the period again.
+   */
+  isPreliminary?: boolean
   sourceId: string
   retrievedAt: Date
 }
@@ -117,7 +125,10 @@ export interface GridIntensitySource {
   ): Promise<IntensityPoint[]>
 }
 
-/** Persistence of fetched intensity points. */
+/**
+ * Persistence of fetched intensity points. The resolver never gives a
+ * preliminary point to the configured store (ADR 0025).
+ */
 export interface IntensityStore {
   get(
     sourceId: string,

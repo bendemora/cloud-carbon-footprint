@@ -4,7 +4,7 @@ Date: 2026-11-10
 
 ## Status
 
-Proposed
+Accepted. Design section 12 puts the marker before the first live source, and the project owner asked on 2026-11-12 for that plan to be carried out. The marker (point 1 of the decision) is built in the pull request that changed this status. Replace and refresh (points 2 and 3) are not built yet. The implementation notes at the end record what was built.
 
 ## Decision
 
@@ -56,3 +56,17 @@ Alternatives considered:
 - An operator who never runs the refresh keeps provisional rows. They are labelled in the API and the export, and the doctor reports their number, so the gap is visible.
 - Re-pricing, once ADR 0024 is in place, is exact for known usage. It is approximate for unknown-usage rows on AWS and Azure, whose inherited embodied share was priced at the first intensity. A refresh from billing data is exact for both.
 - Hourly grouping (Phase 3) multiplies the number of periods. The refresh works on date ranges, so its shape does not change, but finding provisional periods in MongoDB then needs an index.
+
+## Implementation notes
+
+### The marker (2026-11-12)
+
+- `Provenance.isProvisional` is `true` on a provisional result and absent otherwise. A final row and a row estimated before the marker existed therefore look the same, which is what the consequences above ask for.
+- The resolver decides it from the sources it tried for the usage period, in the order it tried them (`mayServeMore` in `GridIntensityResolver.ts`). A source could serve more later when its settled points do not cover the whole period and either it could not be asked (its capability probe or a fetch failed), or the part that is missing lies at or after the start of its data. A result is provisional when that is true of the source that answered or of any source tried before it. Sources after the one that answered are not tried, so they do not count.
+- Three cases are final that the decision does not spell out. A period that lies wholly before the start of a source's data: the source will never have it. A period that starts before a source's data and is covered from there on: it is partly covered, estimated and tier C, but nothing more will come. A source that is failing but already holds the whole period in the store.
+- One case is provisional that the three bullets of point 1 do not name: a lower-ranked source covers the period while a higher-ranked one has only part of it, or nothing yet, without having failed. The decision's definition of a final result ("the best eligible source served the whole period with settled data") covers it.
+- A gap in a source's history that never fills leaves its periods provisional for good, as point 1 accepts ("a gap"). A refresh will estimate them again each time it runs. The same holds for a source whose data ends in the past, a loaded file for example: every later period stays provisional while that source is configured.
+- `IntensityPoint.isPreliminary` is the source's flag for a value it will replace. The resolver uses a preliminary point and marks the result. It keeps the point in memory for the capability TTL, in the store it already keeps for sources with session retention, so a run does not ask for it again. It never writes one to the configured store, so a later run fetches the period again. This settles the question the NESO spike raised in its section 4.6: a stored preliminary point would never have been fetched again.
+- When no source can serve a region and the adapter falls back to the provider's static table, the fallback row is provisional if a configured source could serve the period later (`NoIntensityAvailableError.mayImprove`).
+- `mergeProvenance` marks a merged row provisional when either part is. Rows that differ only in the marker are not marked estimated because of it.
+- The quality tier is not changed by the marker. The tests in `packages/grid-intensity/src/__tests__/provisional.test.ts` cover each case above.

@@ -83,6 +83,9 @@ components:
                   calibrationVersion:
                     type: string
                     description: Optional. Present when calibration was applied.
+                  isProvisional:
+                    type: boolean
+                    description: Optional. True when the same configuration could give a better grid intensity for the row later, because the source had not covered the whole usage period yet, its values were preliminary, or a source ranked ahead of it could not be reached. Absent on a final row, and on rows estimated before the marker existed. It does not change qualityTier.
         periodStartDate:
           type: string
         periodEndDate:

@@ -72,7 +72,15 @@ export interface SourceView {
 }
 
 export class NoIntensityAvailableError extends Error {
-  constructor(provider: CloudProvider, region: string) {
+  constructor(
+    provider: CloudProvider,
+    region: string,
+    /**
+     * Whether a configured source could serve the period on a later run, so
+     * whatever the caller falls back to is provisional (ADR 0025).
+     */
+    readonly mayImprove: boolean = false,
+  ) {
     super(`No grid intensity source can serve ${provider} region ${region}`)
     this.name = 'NoIntensityAvailableError'
   }
@@ -121,6 +129,18 @@ const preferred = (
   return r.coverage > best.coverage ? r : best
 }
 
+/** The result, marked provisional when a later run could improve on it. */
+const marked = (
+  resolved: ResolvedIntensity,
+  isProvisional: boolean,
+): ResolvedIntensity =>
+  isProvisional
+    ? {
+        ...resolved,
+        provenance: { ...resolved.provenance, isProvisional: true },
+      }
+    : resolved
+
 /**
  * Picks the best available source for each usage period and returns the
  * time-weighted intensity with provenance (section 6.2 of the design).
@@ -133,6 +153,9 @@ const preferred = (
  * kind within the TTL, so the default resolver, which lives for the process
  * (one CLI run, or the life of the API server), logs a recurring failure
  * again each TTL.
+ *
+ * A result is marked provisional (ADR 0025) when one of the sources tried
+ * for it could serve more of the period on a later run: see mayServeMore.
  */
 export class GridIntensityResolver implements IntensityResolver {
   private readonly sources: GridIntensitySource[]
@@ -160,8 +183,9 @@ export class GridIntensityResolver implements IntensityResolver {
   /** Stand-ins for capabilities that could not be probed (see capability()). */
   private readonly unprobed = new WeakSet<ZoneCapability>()
   /**
-   * Points of session-retention sources: never in the configured store, and
-   * released by the first resolve call after the TTL.
+   * Points of session-retention sources, and preliminary points of every
+   * source: never in the configured store, and released by the first
+   * resolve call after the TTL.
    */
   private session = new InMemoryIntensityStore()
   private sessionExpiresAt = 0
@@ -196,6 +220,8 @@ export class GridIntensityResolver implements IntensityResolver {
     // The first result that covers the period wins; failing that, the best
     // partial one.
     let best: Resolution | null = null
+    // Whether a source tried so far could serve more of the period later.
+    let mayImprove = false
     const coarser: Candidate[] = []
     for (const source of this.sources) {
       const candidate = await this.candidate(source, provider, region)
@@ -211,7 +237,9 @@ export class GridIntensityResolver implements IntensityResolver {
         end,
         usageGranularity,
       )
-      if (isFinal(resolution, best)) return resolution.resolved
+      mayImprove ||= this.mayServeMore(candidate, resolution, start, end)
+      if (isFinal(resolution, best))
+        return marked(resolution.resolved, mayImprove)
       best = preferred(best, resolution)
     }
     const rank = (c: Candidate) =>
@@ -224,11 +252,41 @@ export class GridIntensityResolver implements IntensityResolver {
         end,
         usageGranularity,
       )
-      if (isFinal(resolution, best)) return resolution.resolved
+      mayImprove ||= this.mayServeMore(candidate, resolution, start, end)
+      if (isFinal(resolution, best))
+        return marked(resolution.resolved, mayImprove)
       best = preferred(best, resolution)
     }
-    if (best) return best.resolved
-    throw new NoIntensityAvailableError(provider, region)
+    if (best) return marked(best.resolved, mayImprove)
+    throw new NoIntensityAvailableError(provider, region, mayImprove)
+  }
+
+  /**
+   * Whether the source could serve more of the usage period on a later run
+   * than it did on this one (ADR 0025). It could when settled points do not
+   * cover the whole period and either the source could not be asked (a
+   * failed probe or fetch), or the part that is missing lies at or after the
+   * start of its data: not published yet, a gap, or still preliminary. What
+   * lies before the start of its data will never be served, so it does not
+   * count.
+   */
+  private mayServeMore(
+    { source, zoneId, capability }: Candidate,
+    resolution: Resolution | null,
+    start: Date,
+    end: Date,
+  ): boolean {
+    const settled = (resolution?.resolved.points ?? []).filter(
+      (point) => !point.isPreliminary,
+    )
+    const covers = (from: Date): boolean =>
+      timeWeightedMean(settled, from, end)?.coverage === 1
+    if (covers(start)) return false
+    if (this.unprobed.has(capability) || this.failureOf(source.id, zoneId))
+      return true
+    const { earliest } = capability
+    if (!earliest || earliest <= start) return true
+    return earliest < end && !covers(earliest)
   }
 
   /**
@@ -388,13 +446,18 @@ export class GridIntensityResolver implements IntensityResolver {
           granularity,
         )
       : []
+    // Preliminary points fetched earlier in the TTL (ADR 0025).
+    const held =
+      persist && store !== this.session
+        ? await this.session.get(source.id, zoneId, start, end, granularity)
+        : []
     const fetched: IntensityPoint[] = []
     const fetchable = this.failureOf(source.id, zoneId)
       ? []
       : periodsCovering(start, end, granularity).filter((period) =>
           isWithinWindow(period, capability),
         )
-    for (const range of missingPeriods(fetchable, stored)) {
+    for (const range of missingPeriods(fetchable, [...held, ...stored])) {
       try {
         const points = await source.fetch(
           zoneId,
@@ -408,11 +471,23 @@ export class GridIntensityResolver implements IntensityResolver {
         break
       }
     }
-    if (persist && fetched.length)
-      await this.storePoints(store, source.id, zoneId, fetched)
+    if (persist) {
+      // A preliminary point is kept in memory for the TTL, so the run does
+      // not ask for it again, and never reaches the configured store: a
+      // later run then fetches the settled value (ADR 0025).
+      const storable = (point: IntensityPoint): boolean =>
+        store === this.session || !point.isPreliminary
+      const settled = fetched.filter(storable)
+      const preliminary = fetched.filter((point) => !storable(point))
+      if (settled.length)
+        await this.storePoints(store, source.id, zoneId, settled)
+      if (preliminary.length) await this.session.put(preliminary)
+    }
 
+    // A stored point replaces a held preliminary one for the same period,
+    // and a fetched point replaces both.
     const byStart = new Map<number, IntensityPoint>()
-    for (const point of [...stored, ...fetched])
+    for (const point of [...held, ...stored, ...fetched])
       byStart.set(point.periodStart.getTime(), point)
     const points = [...byStart.values()]
       .filter((p) => p.periodStart < end && p.periodEnd > start)
