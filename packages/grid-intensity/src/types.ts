@@ -77,6 +77,10 @@ export interface ZoneCapability {
   /**
    * Start of the lookback window the caller may fetch. Unbounded when absent.
    * It limits fetches only: stored points from before it are still used.
+   * It also decides the provisional marker (ADR 0025): a usage period that
+   * lies before the first period the source can be asked for is final, and
+   * a source that leaves it out keeps every period it has no data for
+   * provisional.
    * The resolver fetches whole periods of the requested granularity and asks
    * only for periods that lie wholly in [earliest, latest], so a source
    * should report both on its own period boundaries (a monthly source: the
@@ -117,6 +121,15 @@ export interface GridIntensitySource {
   capabilities(zoneId: string): Promise<ZoneCapability | null>
   /** The source's zone for a cloud region, or null when it has none. */
   mapRegion(provider: CloudProvider, region: string): string | null
+  /**
+   * The points of the range, or fewer when the source does not have them
+   * all. It throws when it cannot say: the resolver then stops asking for
+   * the zone for the capability TTL. A source that read part of the range
+   * before it failed throws a PartialFetchError with the points it read,
+   * and the resolver keeps them. An answer in a form the source does not
+   * know is a failure and not an empty list, so that a change of format
+   * does not pass for missing data.
+   */
   fetch(
     zoneId: string,
     start: Date,

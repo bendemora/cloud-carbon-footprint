@@ -40,15 +40,17 @@ const DAY_MS = 24 * 60 * 60 * 1000
  * The usage period the tiers are for. A day is the finest CCF produces
  * (GroupBy); hourly usage, and with it tier A, comes with design section 7.
  */
-export const REPORT_USAGE_GRANULARITY: Granularity = 'day'
+const REPORT_USAGE_GRANULARITY: Granularity = 'day'
 
 /**
  * The report behind the doctor command and GET /api/grid-intensity/capabilities
  * (design section 6.5): for each provider region, the grid zone it is on,
  * what each configured source can deliver and under which licence state.
  *
- * It reads the resolver's capability answers and failures and calls no data
- * endpoint. Tiers come from each zone's capability (granularities and
+ * It reads the resolver's capability answers and failures and fetches no
+ * intensity data. Each source is probed once per capability TTL to see that
+ * it can be reached, which for a live source such as neso is one request.
+ * Tiers come from each zone's capability (granularities and
  * lookback window) by the rules the resolver applies to a day of usage, so
  * they are what a source offers, not a record of what it returned. Points
  * already in the store from before a source's lookback window are used by

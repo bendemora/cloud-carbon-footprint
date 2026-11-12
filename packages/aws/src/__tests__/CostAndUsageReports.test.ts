@@ -579,7 +579,7 @@ describe('CostAndUsageReports Service', () => {
       ['with embodied emissions', 'embodied'],
       ['with unknown usage', 'unknown'],
     ])(
-      'reports the same electricity and embodied emissions at any grid intensity, for usage %s',
+      'reports the same electricity and embodied emissions at 400 and at 50 gCO2e/kWh when every row is resolved at the same intensity, for usage %s',
       async (_name, fixtureName) => {
         const fixture =
           fixtureName === 'embodied'
@@ -629,6 +629,115 @@ describe('CostAndUsageReports Service', () => {
         expect(estimate.co2e).toBe(estimate.embodiedCo2e)
         expect(estimate.operationalKilowattHours).toBe(estimate.kilowattHours)
       }
+    })
+
+    it('keeps the memory energy of a compute row with no embodied figure at an intensity of 0', async () => {
+      // The Redshift node of this fixture has a memory estimate and no
+      // embodied one. Its memory emissions are 0 on a grid at 0, and its
+      // memory energy must still be counted.
+      const fixture =
+        athenaMockGetQueryResultsWithRedshiftStorageComputeSavingsPlan
+      mockResolveOverride = {
+        factors: { Unknown: 0.0004 },
+        provenance: liveProvenance(400),
+      }
+      const dirtyGrid = await estimatesFor(fixture)
+      mockResolveOverride = {
+        factors: { Unknown: 0 },
+        provenance: liveProvenance(0),
+      }
+      const zeroGrid = await estimatesFor(fixture)
+
+      expect(zeroGrid.length).toBe(dirtyGrid.length)
+      expect(zeroGrid.length).toBeGreaterThan(0)
+      zeroGrid.forEach((zero, index) => {
+        const dirty = dirtyGrid[index]
+        expectEnergySplit(zero)
+        expect(zero.serviceName).toBe(dirty.serviceName)
+        expect(zero.operationalKilowattHours).toBeCloseTo(
+          dirty.operationalKilowattHours,
+          12,
+        )
+      })
+      expect(
+        dirtyGrid.some(
+          (estimate) =>
+            estimate.serviceName === 'AmazonRedshift' &&
+            estimate.embodiedCo2e === 0 &&
+            estimate.operationalKilowattHours > 0,
+        ),
+      ).toBe(true)
+    })
+
+    describe('a row with no co2e value', () => {
+      const athenaRow = (
+        usageType: string,
+        vCpus: string,
+        usageAmount: string,
+        cost: string,
+      ) => ({
+        Data: [
+          '2020-10-30',
+          testAccountId,
+          'us-west-1',
+          'AmazonEC2',
+          usageType,
+          'Hrs',
+          vCpus,
+          usageAmount,
+          cost,
+          '',
+          '',
+        ].map((VarCharValue) => ({ VarCharValue })),
+      })
+      const headers = {
+        Data: [
+          'timestamp',
+          'accountName',
+          'region',
+          'serviceName',
+          'usageType',
+          'usageUnit',
+          'vCpus',
+          'usageAmount',
+          'cost',
+          'resource_tags_user_environment',
+          'resource_tags_aws_created_by',
+        ].map((VarCharValue) => ({ VarCharValue })),
+      }
+      const fixtureOf = (
+        ...rows: ReturnType<typeof athenaRow>[]
+      ): GetQueryResultsCommandOutput => ({
+        $metadata: {},
+        ResultSet: { Rows: [headers, ...rows] },
+      })
+      // An instance type CCF does not know, with no vCPU count in the row.
+      const unsizable = athenaRow('USW1-BoxUsage:zz9.huge', '', '24', '7')
+      const sized = athenaRow('USW1-BoxUsage:m5.xlarge', '4', '24', '5')
+
+      it('has neither field', async () => {
+        const [estimate] = await estimatesFor(fixtureOf(unsizable))
+        expect(estimate.co2e).toBeNaN()
+        expect(estimate).not.toHaveProperty('operationalKilowattHours')
+        expect(estimate).not.toHaveProperty('embodiedCo2e')
+      })
+
+      it('takes the fields off the service estimate it is merged into, in either order', async () => {
+        for (const rows of [
+          [unsizable, sized],
+          [sized, unsizable],
+        ]) {
+          const estimates = await estimatesFor(fixtureOf(...rows))
+          expect(estimates).toHaveLength(1)
+          expect(estimates[0].co2e).toBeNaN()
+          expect(estimates[0]).not.toHaveProperty('operationalKilowattHours')
+          expect(estimates[0]).not.toHaveProperty('embodiedCo2e')
+        }
+        // The sized row on its own has both.
+        const [alone] = await estimatesFor(fixtureOf(sized))
+        expectEnergySplit(alone)
+        expect(alone.operationalKilowattHours).toBeGreaterThan(0)
+      })
     })
   })
 

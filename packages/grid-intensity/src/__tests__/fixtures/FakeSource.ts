@@ -36,6 +36,12 @@ export interface FakeSourceOptions {
   omit?: string[]
   /** whether the point for a period is preliminary; default none is */
   preliminary?: (periodStart: Date) => boolean
+  /**
+   * Called when a fetch has been recorded and before it answers. A test
+   * returns a promise to hold the answer back, or throws to make the fetch
+   * fail with an error of its own.
+   */
+  beforeAnswer?: (call: FetchCall) => Promise<void> | void
 }
 
 export interface FetchCall {
@@ -57,6 +63,7 @@ export class FakeSource implements GridIntensitySource {
   /** Tests change these to let a later fetch return more, or settled, data. */
   omit: string[]
   preliminary: (periodStart: Date) => boolean
+  latest: Date | undefined
 
   constructor(private readonly options: FakeSourceOptions = {}) {
     this.id = options.id ?? 'fake'
@@ -71,6 +78,7 @@ export class FakeSource implements GridIntensitySource {
     this.failFetch = options.failFetch ?? false
     this.omit = options.omit ?? []
     this.preliminary = options.preliminary ?? (() => false)
+    this.latest = options.latest
   }
 
   async probe(): Promise<SourceStatus> {
@@ -92,7 +100,7 @@ export class FakeSource implements GridIntensitySource {
       zoneId,
       granularities: this.options.granularities ?? ['hour', 'day'],
       earliest: this.options.earliest,
-      latest: this.options.latest,
+      latest: this.latest,
       bases: ['location-consumption'],
       licence: this.licence,
     }
@@ -104,12 +112,14 @@ export class FakeSource implements GridIntensitySource {
     end: Date,
     granularity: Granularity,
   ): Promise<IntensityPoint[]> {
-    this.fetchCalls.push({
+    const call: FetchCall = {
       zoneId,
       start: start.toISOString(),
       end: end.toISOString(),
       granularity,
-    })
+    }
+    this.fetchCalls.push(call)
+    await this.options.beforeAnswer?.(call)
     if (this.failFetch) throw new Error('401 Unauthorized')
     const value = this.options.value ?? (() => 100)
     const omit = new Set(this.omit)

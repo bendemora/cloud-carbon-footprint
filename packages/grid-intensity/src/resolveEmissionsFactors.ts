@@ -10,6 +10,7 @@ import {
   GridIntensityResolver,
   NoIntensityAvailableError,
 } from './GridIntensityResolver'
+import { NESO_SOURCE_ID, NesoSource } from './sources/NesoSource'
 import {
   appliedStaticFactor,
   StaticFactors,
@@ -19,6 +20,7 @@ import {
 } from './sources/StaticSource'
 import { STATIC_SOURCE_ID } from './qualityTier'
 import { createIntensityStore } from './stores/createIntensityStore'
+import { RecentReadsStore } from './stores/RecentReadsStore'
 import { gramsToTonnes, tonnesToGrams } from './units'
 import {
   CapabilityReporter,
@@ -52,6 +54,7 @@ let defaultStore: (IntensityStore & { close?: () => Promise<void> }) | undefined
 
 const SOURCE_FACTORIES: Record<string, () => GridIntensitySource> = {
   [STATIC_SOURCE_ID]: () => new StaticSource(staticTables),
+  [NESO_SOURCE_ID]: () => new NesoSource(),
 }
 
 const createDefaultResolver = (): GridIntensityResolver => {
@@ -62,11 +65,17 @@ const createDefaultResolver = (): GridIntensityResolver => {
   // say so wherever grid intensity is first resolved.
   for (const warning of ccfConfig.REMOVED_SETTING_WARNINGS ?? [])
     logger.warn(warning)
-  defaultStore = createIntensityStore(config, ccfConfig.MONGODB, logger)
+  // Rows of one region and period are many: their reads of the store are
+  // remembered for a minute.
+  defaultStore = new RecentReadsStore(
+    createIntensityStore(config, ccfConfig.MONGODB, logger),
+  )
   const sources: GridIntensitySource[] = []
   for (const id of config.SOURCES ?? [STATIC_SOURCE_ID]) {
-    const create = SOURCE_FACTORIES[id]
-    if (create) sources.push(create())
+    // An id is a configured string: only the table's own entries count, so
+    // that 'constructor' is an unknown source and not an inherited function.
+    if (Object.hasOwn(SOURCE_FACTORIES, id))
+      sources.push(SOURCE_FACTORIES[id]())
     else
       logger.warn(
         `Unknown grid intensity source '${id}' in GRID_INTENSITY_SOURCES is ignored. Available: ${Object.keys(SOURCE_FACTORIES).join(', ')}.`,

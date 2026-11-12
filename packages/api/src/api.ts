@@ -174,7 +174,7 @@ export const createRouter = (config?: CCFConfig) => {
    *  get:
    *     tags:
    *     - Grid Intensity
-   *     description: Reports, for every region of the cloud providers whose estimates are included, the electricity grid the region is on and what each configured grid intensity source can deliver (its own zone, the best quality tier for the last 24 hours, 30 days and 12 months, the licence state, any error and the attribution text). It is the report the grid-intensity-doctor command prints. It calls no data endpoint of any source.
+   *     description: Reports, for every region of the cloud providers whose estimates are included, the electricity grid the region is on and what each configured grid intensity source can deliver (its own zone, the best quality tier for the last 24 hours, 30 days and 12 months, the licence state, any error and the attribution text). It is the report the grid-intensity-doctor command prints. It fetches no intensity data. Each source is probed once per capability TTL to see that it can be reached, which for the neso source is one request.
    *     parameters:
    *      - name: cachedEstimates
    *        in: query
