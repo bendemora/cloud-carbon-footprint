@@ -66,6 +66,6 @@ Errors:
 
 ## Using the fixtures
 
-Tests never call the API. Mock `global.fetch` as `packages/common/src/__tests__/EmissionsFactors.test.ts` does and answer with `response.status` and `response.body` from a fixture. The `request.url` is the exact URL that produced the body, so a test can also assert the URL the source builds.
+Tests never call the API. Replace `global.fetch` with a mock and answer with `response.status` and `response.body` from a fixture. The `request.url` is the exact URL that produced the body, so a test can also assert the URL the source builds.
 
 Do not re-record these casually. Recent actual values are revised by NESO after they first appear, so a new recording of the same request can differ.

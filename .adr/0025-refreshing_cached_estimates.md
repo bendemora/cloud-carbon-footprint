@@ -36,13 +36,13 @@ Verified in the code on 2026-11-10 (trunk `a42b5ac6`):
 
 Why this needs deciding now:
 
-- The resolver falls back when a source fails (design section 6.2) and estimates from partial data when a period is not fully published (the implementation notes under 6.2). Both are right for the run. With a cache that never looks again, one outage or one early run fixes tier C or D rows for good. Design section 6.1 notes this for the Electricity Maps v4 source. It applies to every live source, starting with the first one in Phase 2. The legacy v3 path avoids it only by stopping the run.
+- The resolver falls back when a source fails (design section 6.2) and estimates from partial data when a period is not fully published (the implementation notes under 6.2). Both are right for the run. With a cache that never looks again, one outage or one early run fixes tier C or D rows for good. It applies to every live source, starting with the first one in Phase 2. The Electricity Maps lookup the fork inherited avoided it only by stopping the run, and ADR 0026 has since removed that lookup.
 - The same holds when the configuration improves. Adding a source, a credential or a licence acknowledgement does not touch periods that are already cached.
 - How soon each open source publishes settled values is not verified yet (design section 14).
 
 Alternatives considered:
 
-- Stop the run when a source fails, as the v3 path does. It protects the cache from failures only, gives up the availability rule in section 6.2, and does nothing for late data or a changed configuration.
+- Stop the run when a source fails, as the Electricity Maps lookup did until ADR 0026 removed it. It protects the cache from failures only, gives up the availability rule in section 6.2, and does nothing for late data or a changed configuration.
 - Do not cache a period that holds provisional rows. Every request would then read the billing data for those periods again. While a failure is remembered for the capability TTL (24 hours by default), each of those reads would end in the same fallback.
 - Refresh on read, inside the decorator. A read would become slow and costly at times the caller cannot predict, because billing queries cost money on Athena and BigQuery. It can be added behind a setting once the explicit refresh has proved itself.
 - Cache energy only and apply the intensity when rows are read. It removes the problem at its root, but it changes every reader of the cache, the MongoDB paging and the cost of a read, which is more than this programme should take on. Re-pricing from stored fields gets most of the benefit.

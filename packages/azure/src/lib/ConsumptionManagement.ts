@@ -86,7 +86,6 @@ import {
   AZURE_CLOUD_CONSTANTS,
   AZURE_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
 } from '../domain'
-import { AZURE_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES } from './AzureRegions'
 
 export default class ConsumptionManagementService {
   private readonly consumptionManagementLogger: Logger
@@ -256,18 +255,9 @@ export default class ConsumptionManagementService {
     region: string,
     period: Period,
   ): Promise<EmissionsFactorsResolution> {
-    return resolveEmissionsFactors(
-      'AZURE',
-      region,
-      period.start,
-      period.end,
-      { factors: AZURE_EMISSIONS_FACTORS_METRIC_TON_PER_KWH },
-      {
-        legacyElectricityMapsZones:
-          AZURE_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-        logger: this.consumptionManagementLogger,
-      },
-    )
+    return resolveEmissionsFactors('AZURE', region, period.start, period.end, {
+      factors: AZURE_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
+    })
   }
 
   private getFootprintEstimateFromUsageRow(

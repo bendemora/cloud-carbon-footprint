@@ -81,7 +81,6 @@ import {
   EC2_INSTANCE_TYPES,
   INSTANCE_FAMILY_TO_INSTANCE_TYPE_MAPPING,
 } from './AWSInstanceTypes'
-import { AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES } from './AWSRegions'
 
 export default class CostAndUsageReports {
   private readonly dataBaseName: string
@@ -260,18 +259,9 @@ export default class CostAndUsageReports {
     region: string,
     period: Period,
   ): Promise<EmissionsFactorsResolution> {
-    return resolveEmissionsFactors(
-      'AWS',
-      region,
-      period.start,
-      period.end,
-      { factors: AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH },
-      {
-        legacyElectricityMapsZones:
-          AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-        logger: this.costAndUsageReportsLogger,
-      },
-    )
+    return resolveEmissionsFactors('AWS', region, period.start, period.end, {
+      factors: AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
+    })
   }
 
   private getFootprintEstimateFromUsageRow(

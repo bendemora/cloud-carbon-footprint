@@ -94,7 +94,7 @@ export interface SourceStatus {
 }
 
 export interface GridIntensitySource {
-  /** Stable identifier, for example 'electricitymaps', 'neso' or 'static'. */
+  /** Stable identifier, for example 'neso', 'entsoe' or 'static'. */
   readonly id: string
   /** Default licence for the source. Individual zones may narrow it. */
   readonly licence: LicenceDeclaration
@@ -192,35 +192,19 @@ export interface SourceCapabilitySummary {
 export interface RegionCapability {
   provider: CloudProvider
   region: string
+  /**
+   * The electricity grid the region is on, from the grid zone registry
+   * (design section 5.5), or null when the registry has no zone for it.
+   */
+  gridZoneId: string | null
   /** One entry per configured source, in GRID_INTENSITY_SOURCES order. */
   sources: SourceCapabilitySummary[]
-  /**
-   * The region's Electricity Maps zone in the legacy v3 lookup, or null when
-   * it has none and the region is left to the sources. Present only while
-   * that lookup is in use (CapabilityReport.legacyElectricityMaps).
-   */
-  legacyElectricityMapsZoneId?: string | null
-}
-
-/**
- * The Electricity Maps v3 lookup that resolveEmissionsFactors applies before
- * the sources while ELECTRICITY_MAPS_TOKEN is set and no v4 source exists.
- */
-export interface LegacyElectricityMapsState {
-  /** The source id on the provenance of its estimates. */
-  sourceId: string
-  /** The tier of the estimates it serves. */
-  qualityTier: QualityTier
-  /** The state in plain words, for the doctor output. */
-  message: string
 }
 
 /** Served by the doctor command and GET /api/grid-intensity/capabilities. */
 export interface CapabilityReport {
   generatedAt: Date
   regions: RegionCapability[]
-  /** Present only while the legacy Electricity Maps v3 lookup is in use. */
-  legacyElectricityMaps?: LegacyElectricityMapsState
 }
 
 export interface IntensityResolver {

@@ -17,7 +17,7 @@ export type Granularity = 'hour' | 'day' | 'month' | 'year'
  * Accounting basis of an intensity value.
  * - location-consumption: average intensity of what a zone consumes, imports traced (flow-traced).
  * - location-production: average intensity of what a zone generates, imports not traced.
- * - marginal: intensity of the next unit of demand (for example WattTime MOER).
+ * - marginal: intensity of the next unit of demand.
  */
 export type IntensityBasis =
   | 'location-consumption'
@@ -40,7 +40,7 @@ export type QualityTier = 'A' | 'B' | 'C' | 'D'
 
 export interface Provenance {
   sourceId: string
-  /** The grid zone the intensity came from, not the cloud availability zone. */
+  /** The source's zone that the intensity came from, not the cloud availability zone. */
   zoneId: string
   granularity: Granularity
   basis: IntensityBasis
