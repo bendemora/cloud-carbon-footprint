@@ -17,7 +17,14 @@ export interface EstimationResult {
 
 export interface ServiceData {
   readonly cloudProvider: string
+  /**
+   * A legacy total (ADR 0024): the electricity the usage is modelled to
+   * consume, plus its embodied emissions expressed as energy at the grid
+   * factor applied to the row. Once the intensity varies it is not an energy
+   * measure; operationalKilowattHours is.
+   */
   readonly kilowattHours: number
+  /** Metric tons CO2e, operational and embodied together. */
   readonly co2e: number
   readonly cost: number
   readonly usesAverageCPUConstant?: boolean
@@ -34,6 +41,21 @@ export interface ServiceData {
    * Cloud and on-premise rows.
    */
   provenance?: Provenance
+  /**
+   * The electricity the usage is modelled to consume, PUE and replication
+   * included, in kilowatt hours (ADR 0024). Set on AWS, GCP, Azure and
+   * Alibaba Cloud estimates from billing data, together with embodiedCo2e.
+   * Absent on estimates from the cloud usage APIs, on rows cached before it
+   * was recorded, and on a row with no co2e value.
+   */
+  readonly operationalKilowattHours?: number
+  /**
+   * The metric tons CO2e from hardware manufacturing attributed to the usage
+   * (ADR 0024). Operational emissions are co2e less this. With the grid
+   * intensity g of the row's provenance, in gCO2e/kWh,
+   * co2e = operationalKilowattHours x g / 1e6 + embodiedCo2e.
+   */
+  readonly embodiedCo2e?: number
 }
 
 export interface TagCollection {

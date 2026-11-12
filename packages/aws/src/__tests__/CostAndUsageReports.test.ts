@@ -11,6 +11,7 @@ import {
   Logger,
   LookupTableInput,
   LookupTableOutput,
+  ServiceData,
 } from '@cloud-carbon-footprint/common'
 import {
   ComputeEstimator,
@@ -103,19 +104,46 @@ jest.mock('@cloud-carbon-footprint/grid-intensity', () => {
 })
 
 /**
- * The results without provenance, for comparing with expectations written
- * before provenance existed. Fails if any service estimate lacks it, so
- * stripping cannot hide a missing field.
+ * ADR 0024: a row with a co2e value says how much of its energy is
+ * electricity and how much of its emissions is embodied, and its co2e is the
+ * electricity at the row's grid intensity plus the embodied emissions. A row
+ * with no co2e value (an instance type that cannot be sized) says neither.
+ */
+const expectEnergySplit = (estimate: ServiceData) => {
+  const { operationalKilowattHours, embodiedCo2e, co2e, provenance } = estimate
+  if (!Number.isFinite(co2e)) {
+    expect({ operationalKilowattHours, embodiedCo2e }).toEqual({})
+    return
+  }
+  expect(operationalKilowattHours).toBeGreaterThanOrEqual(0)
+  expect(embodiedCo2e).toBeGreaterThanOrEqual(-1e-15)
+  const rebuilt =
+    (operationalKilowattHours * provenance.gCO2ePerKWh) / 1e6 + embodiedCo2e
+  expect(Math.abs(rebuilt - co2e)).toBeLessThanOrEqual(
+    1e-9 * Math.abs(co2e) + 1e-18,
+  )
+}
+
+/**
+ * The results without provenance and without the two fields of ADR 0024,
+ * for comparing with expectations written before those existed. Fails if any
+ * service estimate lacks provenance, or does not split as ADR 0024 says, so
+ * stripping cannot hide a missing or wrong field.
  */
 const withoutProvenance = (results: EstimationResult[]) =>
   results.map((result) => ({
     ...result,
-    serviceEstimates: result.serviceEstimates.map(
-      ({ provenance, ...estimate }) => {
-        expect(provenance?.qualityTier).toEqual(expect.any(String))
-        return estimate
-      },
-    ),
+    serviceEstimates: result.serviceEstimates.map((serviceEstimate) => {
+      const {
+        provenance,
+        operationalKilowattHours: _operationalKilowattHours,
+        embodiedCo2e: _embodiedCo2e,
+        ...estimate
+      } = serviceEstimate
+      expect(provenance?.qualityTier).toEqual(expect.any(String))
+      expectEnergySplit(serviceEstimate)
+      return estimate
+    }),
   }))
 
 jest.mock('@cloud-carbon-footprint/common', () => ({
@@ -474,6 +502,132 @@ describe('CostAndUsageReports Service', () => {
           estimate.kilowattHours * liveTonnesPerKWh,
           15,
         )
+      }
+    })
+  })
+
+  describe('operational energy and embodied emissions (ADR 0024)', () => {
+    const liveProvenance = (gCO2ePerKWh: number) => ({
+      sourceId: 'live-source',
+      zoneId: 'US-TEST',
+      granularity: 'hour',
+      basis: 'location-consumption',
+      factorType: 'lifecycle',
+      isEstimated: false,
+      licenceId: 'public-domain',
+      qualityTier: 'B',
+      gCO2ePerKWh,
+      modelVersion: 'unversioned',
+    })
+
+    /** Every service estimate of a fresh run over the fixture. */
+    const estimatesFor = async (fixture: GetQueryResultsCommandOutput) => {
+      AWS_CLOUD_CONSTANTS.KILOWATT_HOURS_BY_SERVICE_AND_USAGE_UNIT = {
+        total: {},
+      }
+      mockStartQueryExecution(startQueryExecutionResponse)
+      mockGetQueryExecution(getQueryExecutionResponse)
+      mockGetQueryResults(fixture)
+      const results = await new CostAndUsageReports(
+        new ComputeEstimator(),
+        new StorageEstimator(AWS_CLOUD_CONSTANTS.SSDCOEFFICIENT),
+        new StorageEstimator(AWS_CLOUD_CONSTANTS.HDDCOEFFICIENT),
+        new NetworkingEstimator(AWS_CLOUD_CONSTANTS.NETWORKING_COEFFICIENT),
+        new MemoryEstimator(AWS_CLOUD_CONSTANTS.MEMORY_COEFFICIENT),
+        new UnknownEstimator(AWS_CLOUD_CONSTANTS.ESTIMATE_UNKNOWN_USAGE_BY),
+        new EmbodiedEmissionsEstimator(
+          AWS_CLOUD_CONSTANTS.SERVER_EXPECTED_LIFESPAN,
+        ),
+        getServiceWrapper(),
+      ).getEstimates(startDate, endDate, grouping)
+      return results.flatMap((result) => result.serviceEstimates)
+    }
+
+    afterEach(() => {
+      mockResolveOverride = undefined
+    })
+
+    it('separates the embodied emissions of compute rows from their electricity, and gives other rows none', async () => {
+      const estimates = await estimatesFor(
+        athenaMockGetQueryResultsWithEC2ElasticMapWithEmbodiedEmissions,
+      )
+      estimates.forEach(expectEnergySplit)
+      const withEmbodied = estimates.filter(
+        (estimate) => estimate.embodiedCo2e > 0,
+      )
+      expect(withEmbodied.length).toBeGreaterThan(0)
+      for (const estimate of withEmbodied)
+        expect(estimate.operationalKilowattHours).toBeLessThan(
+          estimate.kilowattHours,
+        )
+
+      const withoutCompute = await estimatesFor(
+        athenaMockGetQueryResultsWithS3CloudWatchRDS,
+      )
+      withoutCompute.forEach(expectEnergySplit)
+      const storageOnly = withoutCompute.filter(
+        (estimate) => estimate.serviceName === 'AmazonS3',
+      )
+      expect(storageOnly.length).toBeGreaterThan(0)
+      for (const estimate of storageOnly) {
+        expect(estimate.embodiedCo2e).toBe(0)
+        expect(estimate.operationalKilowattHours).toBe(estimate.kilowattHours)
+      }
+    })
+
+    it.each([
+      ['with embodied emissions', 'embodied'],
+      ['with unknown usage', 'unknown'],
+    ])(
+      'reports the same electricity and embodied emissions at any grid intensity, for usage %s',
+      async (_name, fixtureName) => {
+        const fixture =
+          fixtureName === 'embodied'
+            ? athenaMockGetQueryResultsWithEC2ElasticMapWithEmbodiedEmissions
+            : athenaMockGetQueryResultsWithECSEksKafkaAndUnknownServices
+        mockResolveOverride = {
+          factors: { Unknown: 0.0004 },
+          provenance: liveProvenance(400),
+        }
+        const dirtyGrid = await estimatesFor(fixture)
+        mockResolveOverride = {
+          factors: { Unknown: 0.00005 },
+          provenance: liveProvenance(50),
+        }
+        const cleanGrid = await estimatesFor(fixture)
+
+        expect(cleanGrid.length).toBe(dirtyGrid.length)
+        expect(cleanGrid.length).toBeGreaterThan(0)
+        cleanGrid.forEach((clean, index) => {
+          const dirty = dirtyGrid[index]
+          expectEnergySplit(clean)
+          expectEnergySplit(dirty)
+          expect(clean.operationalKilowattHours).toBeCloseTo(
+            dirty.operationalKilowattHours,
+            9,
+          )
+          expect(clean.embodiedCo2e).toBeCloseTo(dirty.embodiedCo2e, 12)
+          // The legacy total grows on the cleaner grid wherever there are
+          // embodied emissions: they become more kilowatt hours.
+          if (clean.embodiedCo2e > 1e-12)
+            expect(clean.kilowattHours).toBeGreaterThan(dirty.kilowattHours)
+        })
+      },
+    )
+
+    it('holds at an intensity of 0, where co2e is the embodied emissions alone', async () => {
+      mockResolveOverride = {
+        factors: { Unknown: 0 },
+        provenance: liveProvenance(0),
+      }
+      const estimates = await estimatesFor(
+        athenaMockGetQueryResultsWithEC2ElasticMapWithEmbodiedEmissions,
+      )
+      estimates.forEach(expectEnergySplit)
+      expect(estimates.some((estimate) => estimate.embodiedCo2e > 0)).toBe(true)
+      for (const estimate of estimates) {
+        expect(estimate.co2e).toBe(estimate.embodiedCo2e)
+        expect(estimate.operationalKilowattHours).toBe(estimate.kilowattHours)
       }
     })
   })

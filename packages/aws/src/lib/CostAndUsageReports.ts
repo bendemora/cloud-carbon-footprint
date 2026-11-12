@@ -39,6 +39,7 @@ import {
 import {
   AccumulateKilowattHoursBy,
   accumulateKilowattHours,
+  asOperationalEstimate,
   appendOrAccumulateEstimatesByDay,
   CloudConstants,
   CloudConstantsEmissionsFactors,
@@ -158,7 +159,7 @@ export default class CostAndUsageReports {
         appendOrAccumulateEstimatesByDay(
           results,
           costAndUsageReportRow,
-          { ...footprintEstimate, provenance },
+          { ...asOperationalEstimate(footprintEstimate), provenance },
           grouping,
           tagNames,
         )
@@ -176,7 +177,7 @@ export default class CostAndUsageReports {
           appendOrAccumulateEstimatesByDay(
             results,
             rowData,
-            { ...footprintEstimate, provenance },
+            { ...asOperationalEstimate(footprintEstimate), provenance },
             grouping,
             tagNames,
           )
@@ -330,15 +331,16 @@ export default class CostAndUsageReports {
         // if there exist any memory footprint or embodied emissions,
         // add the kwh and co2e for all compute,  memory, and embodied emissions
         if (memoryFootprint.co2e || embodiedEmissions.co2e) {
+          const operationalKilowattHours =
+            computeFootprint.kilowattHours + memoryFootprint.kilowattHours
           const kilowattHours =
-            computeFootprint.kilowattHours +
-            memoryFootprint.kilowattHours +
-            embodiedEmissions.kilowattHours
+            operationalKilowattHours + embodiedEmissions.kilowattHours
           accumulateKilowattHours(
             AWS_CLOUD_CONSTANTS.KILOWATT_HOURS_BY_SERVICE_AND_USAGE_UNIT,
             costAndUsageReportRow,
             kilowattHours,
             AccumulateKilowattHoursBy.COST,
+            operationalKilowattHours,
           )
           return {
             timestamp: computeFootprint.timestamp,
@@ -348,6 +350,8 @@ export default class CostAndUsageReports {
               memoryFootprint.co2e +
               embodiedEmissions.co2e,
             usesAverageCPUConstant: computeFootprint.usesAverageCPUConstant,
+            operationalKilowattHours,
+            embodiedCo2e: embodiedEmissions.co2e,
           }
         }
 

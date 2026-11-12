@@ -7,6 +7,7 @@ import { ConsumptionManagementClient } from '@azure/arm-consumption'
 import {
   CCFConfig,
   EstimationResult,
+  ServiceData,
   GroupBy,
   LookupTableInput,
   LookupTableOutput,
@@ -37,6 +38,7 @@ import {
 } from './fixtures/consumptionManagement.fixtures'
 
 import { ConsumptionManagementService } from '../lib'
+import { UsageDetailResult } from '../lib/ConsumptionTypes'
 import {
   AZURE_CLOUD_CONSTANTS,
   AZURE_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
@@ -63,19 +65,41 @@ jest.mock('@cloud-carbon-footprint/grid-intensity', () => {
 })
 
 /**
- * The results without provenance, for comparing with expectations written
- * before provenance existed. Fails if any service estimate lacks it, so
- * stripping cannot hide a missing field.
+ * ADR 0024: a row with a co2e value says how much of its energy is
+ * electricity and how much of its emissions is embodied, and its co2e is the
+ * electricity at the row's grid intensity plus the embodied emissions.
+ */
+const expectEnergySplit = (estimate: ServiceData) => {
+  const { operationalKilowattHours, embodiedCo2e, co2e, provenance } = estimate
+  expect(operationalKilowattHours).toBeGreaterThanOrEqual(0)
+  expect(embodiedCo2e).toBeGreaterThanOrEqual(-1e-15)
+  const rebuilt =
+    (operationalKilowattHours * provenance.gCO2ePerKWh) / 1e6 + embodiedCo2e
+  expect(Math.abs(rebuilt - co2e)).toBeLessThanOrEqual(
+    1e-9 * Math.abs(co2e) + 1e-18,
+  )
+}
+
+/**
+ * The results without provenance and without the two fields of ADR 0024,
+ * for comparing with expectations written before those existed. Fails if any
+ * service estimate lacks provenance, or does not split as ADR 0024 says, so
+ * stripping cannot hide a missing or wrong field.
  */
 const withoutProvenance = (results: EstimationResult[]) =>
   results.map((result) => ({
     ...result,
-    serviceEstimates: result.serviceEstimates.map(
-      ({ provenance, ...estimate }) => {
-        expect(provenance?.qualityTier).toEqual(expect.any(String))
-        return estimate
-      },
-    ),
+    serviceEstimates: result.serviceEstimates.map((serviceEstimate) => {
+      const {
+        provenance,
+        operationalKilowattHours: _operationalKilowattHours,
+        embodiedCo2e: _embodiedCo2e,
+        ...estimate
+      } = serviceEstimate
+      expect(provenance?.qualityTier).toEqual(expect.any(String))
+      expectEnergySplit(serviceEstimate)
+      return estimate
+    }),
   }))
 
 jest.mock('@cloud-carbon-footprint/common', () => ({
@@ -304,6 +328,124 @@ describe('Azure Consumption Management Service', () => {
         factors: AZURE_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
       })
     }
+  })
+
+  describe('operational energy and embodied emissions (ADR 0024)', () => {
+    const liveProvenance = (gCO2ePerKWh: number) => ({
+      sourceId: 'live-source',
+      zoneId: 'TEST',
+      granularity: 'hour',
+      basis: 'location-consumption',
+      factorType: 'lifecycle',
+      isEstimated: false,
+      licenceId: 'public-domain',
+      qualityTier: 'B',
+      gCO2ePerKWh,
+      modelVersion: 'unversioned',
+    })
+
+    /** Every service estimate of a fresh run over the fixture. */
+    const estimatesFor = async (fixture: UsageDetailResult[]) => {
+      AZURE_CLOUD_CONSTANTS.KILOWATT_HOURS_BY_SERVICE_AND_USAGE_UNIT = {
+        total: {},
+      }
+      mockUsageDetails.list.mockReturnValue(mockIterableResponse(fixture))
+      const results = await new ConsumptionManagementService(
+        new ComputeEstimator(),
+        new StorageEstimator(AZURE_CLOUD_CONSTANTS.SSDCOEFFICIENT),
+        new StorageEstimator(AZURE_CLOUD_CONSTANTS.HDDCOEFFICIENT),
+        new NetworkingEstimator(AZURE_CLOUD_CONSTANTS.NETWORKING_COEFFICIENT),
+        new MemoryEstimator(AZURE_CLOUD_CONSTANTS.MEMORY_COEFFICIENT),
+        new UnknownEstimator(AZURE_CLOUD_CONSTANTS.ESTIMATE_UNKNOWN_USAGE_BY),
+        new EmbodiedEmissionsEstimator(
+          AZURE_CLOUD_CONSTANTS.SERVER_EXPECTED_LIFESPAN,
+        ),
+        new ConsumptionManagementClient(mockCredentials, subscriptionId),
+      ).getEstimates(startDate, endDate, grouping)
+      return results.flatMap((result) => result.serviceEstimates)
+    }
+
+    afterEach(() => {
+      mockResolveOverride = undefined
+    })
+
+    it('separates the embodied emissions of compute rows from their electricity, and gives other rows none', async () => {
+      const estimates = await estimatesFor(
+        mockConsumptionManagementResponseNine,
+      )
+      estimates.forEach(expectEnergySplit)
+      const withEmbodied = estimates.filter(
+        (estimate) => estimate.embodiedCo2e > 0,
+      )
+      expect(withEmbodied.length).toBeGreaterThan(0)
+      for (const estimate of withEmbodied)
+        expect(estimate.operationalKilowattHours).toBeLessThan(
+          estimate.kilowattHours,
+        )
+
+      // Every row of this fixture is storage.
+      const storageOnly = await estimatesFor(
+        mockConsumptionManagementResponseTwo,
+      )
+      storageOnly.forEach(expectEnergySplit)
+      expect(storageOnly.length).toBeGreaterThan(0)
+      for (const estimate of storageOnly) {
+        expect(estimate.embodiedCo2e).toBe(0)
+        expect(estimate.operationalKilowattHours).toBe(estimate.kilowattHours)
+      }
+    })
+
+    it.each([
+      ['with embodied emissions', mockConsumptionManagementResponseNine],
+      ['with unknown usage', mockConsumptionManagementResponseEight],
+    ])(
+      'reports the same electricity and embodied emissions at any grid intensity, for usage %s',
+      async (_name, fixture) => {
+        mockResolveOverride = {
+          factors: { Unknown: 0.0004 },
+          provenance: liveProvenance(400),
+        }
+        const dirtyGrid = await estimatesFor(fixture)
+        mockResolveOverride = {
+          factors: { Unknown: 0.00005 },
+          provenance: liveProvenance(50),
+        }
+        const cleanGrid = await estimatesFor(fixture)
+
+        expect(cleanGrid.length).toBe(dirtyGrid.length)
+        expect(cleanGrid.length).toBeGreaterThan(0)
+        cleanGrid.forEach((clean, index) => {
+          const dirty = dirtyGrid[index]
+          expectEnergySplit(clean)
+          expectEnergySplit(dirty)
+          expect(clean.operationalKilowattHours).toBeCloseTo(
+            dirty.operationalKilowattHours,
+            9,
+          )
+          expect(clean.embodiedCo2e).toBeCloseTo(dirty.embodiedCo2e, 12)
+          // The legacy total grows on the cleaner grid wherever there are
+          // embodied emissions: they become more kilowatt hours.
+          if (clean.embodiedCo2e > 1e-12)
+            expect(clean.kilowattHours).toBeGreaterThan(dirty.kilowattHours)
+        })
+      },
+    )
+
+    it('holds at an intensity of 0, where co2e is the embodied emissions alone', async () => {
+      mockResolveOverride = {
+        factors: { Unknown: 0 },
+        provenance: liveProvenance(0),
+      }
+      const estimates = await estimatesFor(
+        mockConsumptionManagementResponseNine,
+      )
+      estimates.forEach(expectEnergySplit)
+      expect(estimates.some((estimate) => estimate.embodiedCo2e > 0)).toBe(true)
+      for (const estimate of estimates) {
+        expect(estimate.co2e).toBe(estimate.embodiedCo2e)
+        expect(estimate.operationalKilowattHours).toBe(estimate.kilowattHours)
+      }
+    })
   })
 
   describe('provenance', () => {

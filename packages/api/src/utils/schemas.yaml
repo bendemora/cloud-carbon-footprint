@@ -18,8 +18,16 @@ components:
                 enum: [aws, gcp, azure]
               kilowattHours:
                 type: number
+                description: A legacy total. The electricity the usage is modelled to consume, plus the row's embodied emissions expressed as energy at the grid factor applied to it. It is not an energy measure once grid intensity varies; operationalKilowattHours is.
               co2e:
                 type: number
+                description: Metric tons CO2e, operational and embodied together
+              operationalKilowattHours:
+                type: number
+                description: Optional. The electricity the usage is modelled to consume, PUE and replication included, in kilowatt hours. Present, together with embodiedCo2e, on AWS, Google Cloud, Azure and Alibaba Cloud estimates computed from billing data. Absent on estimates from the cloud usage APIs (billing data turned off), on rows cached before it was recorded, and on a row with no co2e value.
+              embodiedCo2e:
+                type: number
+                description: Optional. Metric tons CO2e from hardware manufacturing attributed to the usage. Operational emissions are co2e less this. For a row with provenance, co2e is operationalKilowattHours times provenance.gCO2ePerKWh divided by 1,000,000, plus embodiedCo2e.
               cost:
                 type: number
               usesAverageCPUConstant?:

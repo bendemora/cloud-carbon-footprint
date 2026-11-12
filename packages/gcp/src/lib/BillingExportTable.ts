@@ -30,6 +30,7 @@ import {
 
 import {
   accumulateKilowattHours,
+  asOperationalEstimate,
   AccumulateKilowattHoursBy,
   appendOrAccumulateEstimatesByDay,
   CloudConstants,
@@ -131,7 +132,7 @@ export default class BillingExportTable {
         appendOrAccumulateEstimatesByDay(
           results,
           billingExportRow,
-          { ...footprintEstimate, provenance },
+          { ...asOperationalEstimate(footprintEstimate), provenance },
           grouping,
           tagNames,
         )
@@ -151,7 +152,7 @@ export default class BillingExportTable {
           appendOrAccumulateEstimatesByDay(
             results,
             rowData,
-            { ...footprintEstimate, provenance },
+            { ...asOperationalEstimate(footprintEstimate), provenance },
             grouping,
             tagNames,
           )
@@ -295,6 +296,8 @@ export default class BillingExportTable {
                 embodiedEmissions.kilowattHours,
               co2e: computeFootprint.co2e + embodiedEmissions.co2e,
               usesAverageCPUConstant: computeFootprint.usesAverageCPUConstant,
+              operationalKilowattHours: computeFootprint.kilowattHours,
+              embodiedCo2e: embodiedEmissions.co2e,
             }
           }
 
