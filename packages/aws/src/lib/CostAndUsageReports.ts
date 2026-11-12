@@ -329,8 +329,11 @@ export default class CostAndUsageReports {
         }
 
         // if there exist any memory footprint or embodied emissions,
-        // add the kwh and co2e for all compute,  memory, and embodied emissions
-        if (memoryFootprint.co2e || embodiedEmissions.co2e) {
+        // add the kwh and co2e for all compute,  memory, and embodied emissions.
+        // The memory test is on its energy, as on Azure: its co2e is 0 at a
+        // grid intensity of 0, and the row must not lose its memory energy
+        // there (ADR 0024, implementation notes).
+        if (memoryFootprint.kilowattHours || embodiedEmissions.co2e) {
           const operationalKilowattHours =
             computeFootprint.kilowattHours + memoryFootprint.kilowattHours
           const kilowattHours =
