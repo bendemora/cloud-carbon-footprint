@@ -305,7 +305,7 @@ describe('GCP BillingExportTable Service', () => {
       ],
       ['with unknown usage', mockQueryResultsUnknownAndCloudSQLCompute],
     ])(
-      'reports the same electricity and embodied emissions at any grid intensity, for usage %s',
+      'reports the same electricity and embodied emissions at 400 and at 50 gCO2e/kWh when every row is resolved at the same intensity, for usage %s',
       async (_name, fixture) => {
         mockResolveOverride = {
           factors: { Unknown: 0.0004 },

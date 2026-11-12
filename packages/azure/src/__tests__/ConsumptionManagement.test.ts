@@ -383,7 +383,8 @@ describe('Azure Consumption Management Service', () => {
           estimate.kilowattHours,
         )
 
-      // Every row of this fixture is storage.
+      // No row of this fixture is compute: it is storage, and one row of
+      // unknown usage estimated from the storage average.
       const storageOnly = await estimatesFor(
         mockConsumptionManagementResponseTwo,
       )
@@ -399,7 +400,7 @@ describe('Azure Consumption Management Service', () => {
       ['with embodied emissions', mockConsumptionManagementResponseNine],
       ['with unknown usage', mockConsumptionManagementResponseEight],
     ])(
-      'reports the same electricity and embodied emissions at any grid intensity, for usage %s',
+      'reports the same electricity and embodied emissions at 400 and at 50 gCO2e/kWh when every row is resolved at the same intensity, for usage %s',
       async (_name, fixture) => {
         mockResolveOverride = {
           factors: { Unknown: 0.0004 },
@@ -430,6 +431,65 @@ describe('Azure Consumption Management Service', () => {
         })
       },
     )
+
+    it('reports the embodied emissions that unknown usage inherits from the known usage it is averaged from', async () => {
+      // A virtual machine with embodied emissions, and a service CCF has no
+      // model for that is billed in the same unit, so it is estimated from
+      // the machine's average.
+      const usage = (
+        meterName: string,
+        meterCategory: string,
+        quantity: number,
+      ) =>
+        ({
+          id: 'test-subscription-id',
+          kind: 'legacy',
+          name: 'name',
+          type: 'type',
+          tags: {},
+          date: new Date('2020-11-02'),
+          quantity,
+          cost: 10,
+          meterDetails: {
+            meterName,
+            unitOfMeasure: '1 Hour',
+            meterCategory,
+          },
+          subscriptionName: 'test-subscription',
+          resourceLocation: 'northeurope',
+          resourceGroup: 'test-resource-group',
+        }) as unknown as UsageDetailResult
+      const fixture = [
+        usage('D8 v3', 'Virtual Machines', 5),
+        usage('Standard Gateway', 'Azure Bastion', 7),
+      ]
+      const unknownRow = (estimates: ServiceData[]) =>
+        estimates.find((estimate) => estimate.serviceName === 'Azure Bastion')
+
+      mockResolveOverride = {
+        factors: { Unknown: 0.0004 },
+        provenance: liveProvenance(400),
+      }
+      const dirtyGrid = await estimatesFor(fixture)
+      mockResolveOverride = {
+        factors: { Unknown: 0.00005 },
+        provenance: liveProvenance(50),
+      }
+      const cleanGrid = await estimatesFor(fixture)
+
+      dirtyGrid.forEach(expectEnergySplit)
+      cleanGrid.forEach(expectEnergySplit)
+      const dirty = unknownRow(dirtyGrid)
+      const clean = unknownRow(cleanGrid)
+      expect(dirty.embodiedCo2e).toBeGreaterThan(0)
+      expect(dirty.operationalKilowattHours).toBeGreaterThan(0)
+      expect(dirty.operationalKilowattHours).toBeLessThan(dirty.kilowattHours)
+      expect(clean.operationalKilowattHours).toBeCloseTo(
+        dirty.operationalKilowattHours,
+        12,
+      )
+      expect(clean.embodiedCo2e).toBeCloseTo(dirty.embodiedCo2e, 15)
+    })
 
     it('holds at an intensity of 0, where co2e is the embodied emissions alone', async () => {
       mockResolveOverride = {

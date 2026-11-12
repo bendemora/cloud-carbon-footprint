@@ -51,11 +51,16 @@ export default class UnknownEstimator implements IFootprintEstimator {
         totals,
         operationalKilowattHoursOf,
       )
-      return {
+      const estimate = {
         timestamp: data.timestamp,
         kilowattHours: estimatedKilowattHours,
         co2e: estimatedCo2eEmissions,
         usesAverageCPUConstant: false,
+      }
+      // A row with no co2e value has nothing to split (ADR 0024, point 4).
+      if (!Number.isFinite(estimatedCo2eEmissions)) return estimate
+      return {
+        ...estimate,
         operationalKilowattHours,
         embodiedCo2e:
           estimatedCo2eEmissions -
