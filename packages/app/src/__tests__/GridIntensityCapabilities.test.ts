@@ -3,6 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { mkdtemp, readdir, rm, writeFile } from 'fs/promises'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import { setConfig } from '@cloud-carbon-footprint/common'
 import { AWS_REGIONS } from '@cloud-carbon-footprint/aws'
 import {
@@ -16,6 +19,7 @@ import {
   shutdownDefaultResolver,
 } from '@cloud-carbon-footprint/grid-intensity'
 import App from '../App'
+import LocalCacheManager from '../LocalCacheManager'
 
 // The settings the report depends on. Each test starts with none of them
 // set, which is the default configuration.
@@ -27,6 +31,9 @@ const SETTINGS = [
   'GCP_INCLUDE_ESTIMATES',
   'AZURE_INCLUDE_ESTIMATES',
   'GCP_USE_CARBON_FREE_ENERGY_PERCENTAGE',
+  'CACHE_MODE',
+  'CCF_CACHE_PATH',
+  'TEST_MODE',
 ]
 
 const TIER_D = { last24Hours: 'D', last30Days: 'D', last12Months: 'D' }
@@ -132,5 +139,96 @@ describe('App.getGridIntensityCapabilities', () => {
     expect(entryFor(report, 'GCP', 'europe-north2').sources[0].zoneId).toBe(
       'gcp:Unknown',
     )
+  })
+
+  describe('with the estimates cache', () => {
+    let directory: string
+
+    /** A cache file of the grouping with one day for each flag given. */
+    const seedCache = (grouping: string, provisionalDays: boolean[]) =>
+      writeFile(
+        join(directory, `estimates.cache.${grouping}.json`),
+        '[\n' +
+          provisionalDays
+            .map((isProvisional, index) =>
+              JSON.stringify({
+                timestamp: new Date(Date.UTC(2026, 10, 1 + index)),
+                serviceEstimates: [
+                  {
+                    cloudProvider: 'AWS',
+                    serviceName: 'service',
+                    provenance: isProvisional ? { isProvisional } : {},
+                  },
+                ],
+                groupBy: grouping,
+              }),
+            )
+            .join('\n,\n') +
+          '\n]',
+      )
+
+    beforeEach(async () => {
+      directory = await mkdtemp(join(tmpdir(), 'estimates-cache-'))
+      process.env.CCF_CACHE_PATH = join(directory, 'estimates.cache')
+    })
+
+    afterEach(async () => {
+      jest.restoreAllMocks()
+      await rm(directory, { recursive: true, force: true })
+    })
+
+    it('does not read the estimates cache unless it is asked to', async () => {
+      await seedCache('day', [false, true])
+      const getCachedPeriods = jest.spyOn(
+        LocalCacheManager.prototype,
+        'getCachedPeriods',
+      )
+
+      const report = await new App().getGridIntensityCapabilities()
+      const notAsked = await new App().getGridIntensityCapabilities({
+        cachedEstimates: false,
+      })
+
+      expect(getCachedPeriods).not.toHaveBeenCalled()
+      expect(report).not.toHaveProperty('cachedEstimates')
+      expect(notAsked).not.toHaveProperty('cachedEstimates')
+    })
+
+    it('adds the cached periods of each grouping next to the report when it is asked to', async () => {
+      await seedCache('day', [false, true, true])
+      await seedCache('month', [false])
+      const plainReport = await new App().getGridIntensityCapabilities()
+
+      const report = await new App().getGridIntensityCapabilities({
+        cachedEstimates: true,
+      })
+
+      expect(report.cachedEstimates).toEqual([
+        { groupBy: 'day', cachedPeriods: 3, provisionalPeriods: 2 },
+        { groupBy: 'month', cachedPeriods: 1, provisionalPeriods: 0 },
+      ])
+      expect(report.regions).toEqual(plainReport.regions)
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('reports no cached periods, and creates no cache file, when there is no cache', async () => {
+      const report = await new App().getGridIntensityCapabilities({
+        cachedEstimates: true,
+      })
+
+      expect(report.cachedEstimates).toEqual([])
+      expect(await readdir(directory)).toEqual([])
+    })
+
+    it('fails when it is asked for the cached periods and the cache cannot be read', async () => {
+      await writeFile(
+        join(directory, 'estimates.cache.day.json'),
+        '[\n{"timestamp":"2026-11-01T00',
+      )
+
+      await expect(
+        new App().getGridIntensityCapabilities({ cachedEstimates: true }),
+      ).rejects.toThrow(SyntaxError)
+    })
   })
 })

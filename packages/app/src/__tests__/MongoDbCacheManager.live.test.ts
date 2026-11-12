@@ -6,7 +6,8 @@
 /*
  * MongoDbCacheManager against a real MongoDB server. The other tests of the
  * cache manager replace the driver with a fake; these check what the driver
- * and the server really do with a day of 50,000 rows.
+ * and the server really do with a day of 50,000 rows, and with the queries
+ * that replace cached rows and list the cached periods (ADR 0025).
  *
  * They are skipped unless MONGODB_LIVE_TESTS holds the address of a
  * throwaway server (no access control), and they never run when CI is set:
@@ -27,6 +28,7 @@ import {
   Logger,
   ServiceData,
 } from '@cloud-carbon-footprint/common'
+import { DateRange } from '../CacheManager'
 import MongoDbCacheManager from '../MongoDbCacheManager'
 import { EstimationRequest } from '../CreateValidRequest'
 
@@ -262,5 +264,264 @@ describeLive('MongoDbCacheManager against a real MongoDB server', () => {
       MongoDbCacheManager.mongoClient = client
       await unreachable.close()
     }
+  })
+
+  /*
+   * Replace and the list of cached periods use the week grouping, which has
+   * a collection of its own, so the rows the tests above count stay as they
+   * are.
+   */
+  describe('replacing rows and listing the cached periods', () => {
+    const WEEK_COLLECTION = 'estimates-by-week'
+    const week = new Date('2026-01-05T00:00:00.000Z')
+    const nextWeek = new Date('2026-01-12T00:00:00.000Z')
+    const laterWeek = new Date('2026-01-19T00:00:00.000Z')
+
+    const weekRows = () => client.db(DATABASE).collection(WEEK_COLLECTION)
+
+    const rowOf = (
+      index: number,
+      cloudProvider: string,
+      isProvisional = false,
+    ): ServiceData => {
+      const row = serviceEstimate(index)
+      return {
+        ...row,
+        cloudProvider,
+        provenance: {
+          ...row.provenance,
+          ...(isProvisional && { isProvisional: true }),
+        },
+      }
+    }
+
+    const weekOf = (
+      timestamp: Date,
+      serviceEstimates: ServiceData[],
+    ): EstimationResult => ({
+      timestamp,
+      serviceEstimates,
+      periodStartDate: timestamp,
+      periodEndDate: timestamp,
+      groupBy: GroupBy.week,
+    })
+
+    /** What the collection holds: the week, provider and name of each row. */
+    const stored = async () => {
+      const found = await weekRows()
+        .find(
+          {},
+          {
+            projection: {
+              _id: 0,
+              timestamp: 1,
+              cloudProvider: 1,
+              serviceName: 1,
+            },
+          },
+        )
+        .toArray()
+      return found
+        .map((row) => [
+          row.timestamp.toISOString().slice(0, 10),
+          row.cloudProvider,
+          row.serviceName,
+        ])
+        .sort()
+    }
+
+    /**
+     * The cached periods: the week, whether it is provisional, and the worst
+     * tier of each provider and region as text, in an order that does not
+     * depend on the server's.
+     */
+    const listed = async (range?: DateRange) =>
+      (await manager.getCachedPeriods('week', range)).map(
+        ({ timestamp, isProvisional, worstTiers }) => [
+          timestamp,
+          isProvisional,
+          worstTiers
+            .map(
+              ({ cloudProvider, region, qualityTier }) =>
+                `${cloudProvider} ${region} ${qualityTier}`,
+            )
+            .sort(),
+        ],
+      )
+
+    // Every row the tests store is of tier D in us-east-1, unless they say so.
+    const AWS_D = 'AWS us-east-1 D'
+    const GCP_D = 'GCP us-east-1 D'
+
+    beforeEach(async () => {
+      await weekRows().deleteMany({})
+      await manager.setEstimates(
+        [
+          weekOf(week, [
+            rowOf(0, 'AWS', true),
+            rowOf(1, 'AWS'),
+            rowOf(2, 'GCP'),
+          ]),
+          weekOf(nextWeek, [rowOf(3, 'AWS'), rowOf(4, 'GCP')]),
+        ],
+        'week',
+      )
+    })
+
+    it('lists the cached periods, oldest first, and marks the one that holds a provisional row', async () => {
+      expect(await listed()).toEqual([
+        [week, true, [AWS_D, GCP_D]],
+        [nextWeek, false, [AWS_D, GCP_D]],
+      ])
+      expect(await listed({ startDate: nextWeek, endDate: nextWeek })).toEqual([
+        [nextWeek, false, [AWS_D, GCP_D]],
+      ])
+      expect(
+        await listed({ startDate: laterWeek, endDate: laterWeek }),
+      ).toEqual([])
+    })
+
+    it('gives the worst tier of the rows of each provider and region, and none for rows without provenance', async () => {
+      const tierB = rowOf(5, 'AWS')
+      tierB.provenance.qualityTier = 'B'
+      const { provenance: _none, ...withoutProvenance } = rowOf(8, 'AZURE')
+      await manager.setEstimates(
+        [
+          weekOf(laterWeek, [
+            tierB,
+            rowOf(6, 'AWS'),
+            { ...tierB, region: 'eu-west-2' },
+            { ...tierB, region: 'eu-west-2', serviceName: 'AmazonEC2-7' },
+            withoutProvenance,
+          ]),
+        ],
+        'week',
+      )
+
+      expect(
+        await listed({ startDate: laterWeek, endDate: laterWeek }),
+      ).toEqual([[laterWeek, false, ['AWS eu-west-2 B', AWS_D]]])
+    })
+
+    it('has no periods for a grouping without a collection, and does not create one', async () => {
+      expect(await manager.getCachedPeriods('year')).toEqual([])
+
+      const collections = await client.db(DATABASE).listCollections().toArray()
+      expect(collections.map(({ name }) => name)).not.toContain(
+        'estimates-by-year',
+      )
+    })
+
+    it('replaces the rows of the given providers of a period, whatever the case of the name, and leaves the rest', async () => {
+      await manager.replaceEstimates(
+        [weekOf(week, [rowOf(10, 'AWS')])],
+        'week',
+        ['aws'],
+      )
+
+      expect(await stored()).toEqual([
+        ['2026-01-05', 'AWS', 'AmazonEC2-10'],
+        ['2026-01-05', 'GCP', 'AmazonEC2-2'],
+        ['2026-01-12', 'AWS', 'AmazonEC2-3'],
+        ['2026-01-12', 'GCP', 'AmazonEC2-4'],
+      ])
+      // The provisional row is gone, so the period is no longer provisional.
+      expect(await listed()).toEqual([
+        [week, false, [AWS_D, GCP_D]],
+        [nextWeek, false, [AWS_D, GCP_D]],
+      ])
+    })
+
+    it('does not take a provider for one whose name only starts the same', async () => {
+      await weekRows().insertOne({
+        ...rowOf(5, 'AWS-other'),
+        timestamp: week,
+        groupBy: GroupBy.week,
+      })
+
+      await manager.replaceEstimates(
+        [weekOf(week, [rowOf(10, 'AWS')])],
+        'week',
+        ['AWS'],
+      )
+
+      expect(await stored()).toEqual([
+        ['2026-01-05', 'AWS', 'AmazonEC2-10'],
+        ['2026-01-05', 'AWS-other', 'AmazonEC2-5'],
+        ['2026-01-05', 'GCP', 'AmazonEC2-2'],
+        ['2026-01-12', 'AWS', 'AmazonEC2-3'],
+        ['2026-01-12', 'GCP', 'AmazonEC2-4'],
+      ])
+    })
+
+    it('replaces every row of the periods when no providers are given, and adds a period that is not cached', async () => {
+      await manager.replaceEstimates(
+        [
+          weekOf(nextWeek, [rowOf(11, 'AWS')]),
+          weekOf(laterWeek, [rowOf(12, 'AZURE', true)]),
+        ],
+        'week',
+      )
+
+      expect(await stored()).toEqual([
+        ['2026-01-05', 'AWS', 'AmazonEC2-0'],
+        ['2026-01-05', 'AWS', 'AmazonEC2-1'],
+        ['2026-01-05', 'GCP', 'AmazonEC2-2'],
+        ['2026-01-12', 'AWS', 'AmazonEC2-11'],
+        ['2026-01-19', 'AZURE', 'AmazonEC2-12'],
+      ])
+      expect(await listed()).toEqual([
+        [week, true, [AWS_D, GCP_D]],
+        [nextWeek, false, [AWS_D]],
+        [laterWeek, true, ['AZURE us-east-1 D']],
+      ])
+    })
+
+    it('removes a period whose new estimate holds no rows', async () => {
+      await manager.replaceEstimates([weekOf(nextWeek, [])], 'week')
+
+      expect(await listed()).toEqual([[week, true, [AWS_D, GCP_D]]])
+    })
+
+    it('replaces a period of 50,000 rows', async () => {
+      await manager.replaceEstimates(
+        [{ ...estimatesOf(week, 0, ROWS), groupBy: GroupBy.week }],
+        'week',
+        ['AWS'],
+      )
+
+      expect(await weekRows().countDocuments({ timestamp: week })).toBe(
+        ROWS + 1,
+      )
+      expect(
+        await weekRows().countDocuments({
+          timestamp: week,
+          cloudProvider: 'GCP',
+        }),
+      ).toBe(1)
+      expect(await weekRows().countDocuments({ timestamp: nextWeek })).toBe(2)
+    })
+
+    it('fails to replace when the server cannot be reached', async () => {
+      const unreachable = new MongoClient(
+        `mongodb://127.0.0.1:${await unusedPort()}`,
+        { serverSelectionTimeoutMS: 500 },
+      )
+      MongoDbCacheManager.mongoClient = unreachable
+
+      try {
+        await expect(
+          manager.replaceEstimates([weekOf(week, [rowOf(10, 'AWS')])], 'week', [
+            'AWS',
+          ]),
+        ).rejects.toMatchObject({ name: 'MongoServerSelectionError' })
+        await expect(manager.getCachedPeriods('week')).rejects.toMatchObject({
+          name: 'MongoServerSelectionError',
+        })
+      } finally {
+        MongoDbCacheManager.mongoClient = client
+        await unreachable.close()
+      }
+    })
   })
 })
