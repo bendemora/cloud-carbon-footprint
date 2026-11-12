@@ -30,6 +30,7 @@ import {
 
 import {
   accumulateKilowattHours,
+  asOperationalEstimate,
   AccumulateKilowattHoursBy,
   appendOrAccumulateEstimatesByDay,
   CloudConstants,
@@ -72,7 +73,6 @@ import {
 import BillingExportRow from './BillingExportRow'
 import { GCP_CLOUD_CONSTANTS, getGCPEmissionsFactors } from '../domain'
 import { GCP_REPLICATION_FACTORS_FOR_SERVICES } from './ReplicationFactors'
-import { GCP_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES } from './GCPRegions'
 
 export default class BillingExportTable {
   private readonly tableName: string
@@ -132,7 +132,7 @@ export default class BillingExportTable {
         appendOrAccumulateEstimatesByDay(
           results,
           billingExportRow,
-          { ...footprintEstimate, provenance },
+          { ...asOperationalEstimate(footprintEstimate), provenance },
           grouping,
           tagNames,
         )
@@ -152,7 +152,7 @@ export default class BillingExportTable {
           appendOrAccumulateEstimatesByDay(
             results,
             rowData,
-            { ...footprintEstimate, provenance },
+            { ...asOperationalEstimate(footprintEstimate), provenance },
             grouping,
             tagNames,
           )
@@ -241,18 +241,9 @@ export default class BillingExportTable {
     region: string,
     period: Period,
   ): Promise<EmissionsFactorsResolution> {
-    return resolveEmissionsFactors(
-      'GCP',
-      region,
-      period.start,
-      period.end,
-      { factors: getGCPEmissionsFactors },
-      {
-        legacyElectricityMapsZones:
-          GCP_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-        logger: this.billingExportTableLogger,
-      },
-    )
+    return resolveEmissionsFactors('GCP', region, period.start, period.end, {
+      factors: getGCPEmissionsFactors,
+    })
   }
 
   private getFootprintEstimateFromUsageRow(
@@ -305,6 +296,8 @@ export default class BillingExportTable {
                 embodiedEmissions.kilowattHours,
               co2e: computeFootprint.co2e + embodiedEmissions.co2e,
               usesAverageCPUConstant: computeFootprint.usesAverageCPUConstant,
+              operationalKilowattHours: computeFootprint.kilowattHours,
+              embodiedCo2e: embodiedEmissions.co2e,
             }
           }
 

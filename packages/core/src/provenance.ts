@@ -23,6 +23,7 @@ const COMPARED_FIELDS: (keyof Provenance)[] = [
   'calibrationVersion',
 ]
 
+/** Whether two rows got the same intensity; the provisional marker aside. */
 const same = (a: Provenance, b: Provenance): boolean =>
   COMPARED_FIELDS.every((field) => a[field] === b[field])
 
@@ -65,11 +66,16 @@ const mergeLicence = (a: LicenceId, b: LicenceId): LicenceId => {
  * identical provenance, which is kept as it is. When they differ, the
  * merged row takes the fields of the lower-tier row, except the licence,
  * which is the more restrictive of the two; it is marked estimated, and its
- * intensity is the energy-weighted mean of the two. kilowattHours includes
- * embodied emissions converted at each row's factor, so that mean is the
- * merged row's co2e (tonnes) x 1e6 divided by its kilowattHours, not an
- * operational-only intensity. When only one row has provenance, that one is kept, marked
- * estimated.
+ * intensity is the mean of the two, weighted by the energy the caller gives
+ * for each row. appendOrAccumulateEstimatesByDay gives each row's
+ * electricity (operationalKilowattHours) when both rows carry it, so the
+ * mean is the intensity of the merged row's electricity and the identity
+ * of ADR 0024 holds on it. Otherwise it gives the legacy kilowattHours,
+ * and the mean is the merged row's co2e (tonnes) x 1e6 divided by its
+ * kilowattHours.
+ * When only one row has provenance, that one is kept, marked
+ * estimated. The merged row is provisional (ADR 0025) when either row is;
+ * rows that differ in nothing else are not marked estimated for it.
  */
 export const mergeProvenance = (
   a: Provenance | undefined,
@@ -79,7 +85,7 @@ export const mergeProvenance = (
 ): Provenance | undefined => {
   if (!a && !b) return undefined
   if (!a || !b) return markEstimated(a ?? b)
-  if (same(a, b)) return a
+  if (same(a, b)) return b.isProvisional && !a.isProvisional ? b : a
 
   const lower = a.qualityTier >= b.qualityTier ? a : b
   const totalKilowattHours = aKilowattHours + bKilowattHours
@@ -88,9 +94,11 @@ export const mergeProvenance = (
       ? (a.gCO2ePerKWh * aKilowattHours + b.gCO2ePerKWh * bKilowattHours) /
         totalKilowattHours
       : (a.gCO2ePerKWh + b.gCO2ePerKWh) / 2
+  const { isProvisional: _lowerIsProvisional, ...merged } = markEstimated(lower)
   return {
-    ...markEstimated(lower),
+    ...merged,
     licenceId: mergeLicence(a.licenceId, b.licenceId),
     gCO2ePerKWh,
+    ...((a.isProvisional || b.isProvisional) && { isProvisional: true }),
   }
 }

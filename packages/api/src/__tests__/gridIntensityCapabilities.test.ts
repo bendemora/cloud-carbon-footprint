@@ -15,7 +15,6 @@ import { createRouter } from '../api'
 // The settings the report depends on. Each test starts with none of them
 // set, which is the default configuration.
 const SETTINGS = [
-  'ELECTRICITY_MAPS_TOKEN',
   'GRID_INTENSITY_SOURCES',
   'GRID_INTENSITY_LICENCE_ACKNOWLEDGEMENTS',
   'GRID_INTENSITY_STORE',
@@ -29,10 +28,7 @@ describe('GET /grid-intensity/capabilities', () => {
   const saved: Record<string, string | undefined> = {}
 
   /** A server on the configuration the environment gives. */
-  const serverWith = (settings: Record<string, string> = {}) => {
-    Object.assign(process.env, settings)
-    return express().use(createRouter())
-  }
+  const server = () => express().use(createRouter())
 
   beforeEach(() => {
     for (const name of SETTINGS) {
@@ -51,9 +47,7 @@ describe('GET /grid-intensity/capabilities', () => {
   })
 
   it('returns as JSON the report that the doctor prints', async () => {
-    const response = await request(serverWith()).get(
-      '/grid-intensity/capabilities',
-    )
+    const response = await request(server()).get('/grid-intensity/capabilities')
     const report = await new App().getGridIntensityCapabilities()
 
     expect(response.status).toBe(200)
@@ -66,6 +60,7 @@ describe('GET /grid-intensity/capabilities', () => {
     expect(response.body.regions[0]).toEqual({
       provider: 'AWS',
       region: 'us-east-1',
+      gridZoneId: 'US-MIDA-PJM',
       sources: [
         {
           sourceId: 'static',
@@ -80,22 +75,6 @@ describe('GET /grid-intensity/capabilities', () => {
     expect(new Date(response.body.generatedAt).toISOString()).toBe(
       response.body.generatedAt,
     )
-    expect(response.body).not.toHaveProperty('legacyElectricityMaps')
-  })
-
-  it('states the Electricity Maps v3 lookup when a token is set', async () => {
-    const response = await request(
-      serverWith({ ELECTRICITY_MAPS_TOKEN: 'for-tests' }),
-    ).get('/grid-intensity/capabilities')
-
-    expect(response.body.legacyElectricityMaps).toEqual({
-      sourceId: 'electricitymaps-v3',
-      qualityTier: 'C',
-      message: expect.stringContaining('tier C'),
-    })
-    expect(response.body.regions[0].legacyElectricityMapsZoneId).toBe(
-      'US-MIDA-PJM',
-    )
   })
 
   it('answers with a server error when the report cannot be built', async () => {
@@ -104,9 +83,7 @@ describe('GET /grid-intensity/capabilities', () => {
       .spyOn(App.prototype, 'getGridIntensityCapabilities')
       .mockRejectedValueOnce(new Error('no report'))
 
-    const response = await request(serverWith()).get(
-      '/grid-intensity/capabilities',
-    )
+    const response = await request(server()).get('/grid-intensity/capabilities')
 
     expect(response.status).toBe(500)
     expect(response.text).toBe('Internal Server Error')

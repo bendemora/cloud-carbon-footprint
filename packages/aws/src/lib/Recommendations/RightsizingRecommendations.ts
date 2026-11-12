@@ -14,7 +14,6 @@ import {
 } from '@cloud-carbon-footprint/core'
 import {
   AWS_RECOMMENDATIONS_TARGETS,
-  Logger,
   RecommendationResult,
 } from '@cloud-carbon-footprint/common'
 import {
@@ -30,18 +29,15 @@ import {
   RightsizingTargetRecommendation,
 } from './Rightsizing'
 import { AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH } from '../../domain'
-import { AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES } from '../AWSRegions'
 
 export default class RightsizingRecommendations implements ICloudRecommendationsService {
   private readonly rightsizingRecommendationsService: string
-  private readonly recommendationsLogger: Logger
   constructor(
     private readonly computeEstimator: ComputeEstimator,
     private readonly memoryEstimator: MemoryEstimator,
     private readonly serviceWrapper: ServiceWrapper,
   ) {
     this.rightsizingRecommendationsService = 'AmazonEC2'
-    this.recommendationsLogger = new Logger('AWSRecommendations')
   }
 
   async getRecommendations(
@@ -167,11 +163,6 @@ export default class RightsizingRecommendations implements ICloudRecommendations
       period.start,
       period.end,
       { factors: AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH },
-      {
-        legacyElectricityMapsZones:
-          AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-        logger: this.recommendationsLogger,
-      },
     )
     const computeFootprint = new AWSComputeEstimatesBuilder(
       rightsizingRecommendation,

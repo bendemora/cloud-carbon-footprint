@@ -20,7 +20,6 @@ import App from '../App'
 // The settings the report depends on. Each test starts with none of them
 // set, which is the default configuration.
 const SETTINGS = [
-  'ELECTRICITY_MAPS_TOKEN',
   'GRID_INTENSITY_SOURCES',
   'GRID_INTENSITY_LICENCE_ACKNOWLEDGEMENTS',
   'GRID_INTENSITY_STORE',
@@ -107,28 +106,14 @@ describe('App.getGridIntensityCapabilities', () => {
     // Azure's table has no factor for it, so estimates use the Unknown one.
     expect(zoneOf('AZURE', 'qatarcentral')).toBe('azure:Unknown')
 
-    expect(report).not.toHaveProperty('legacyElectricityMaps')
-    expect(fetchMock).not.toHaveBeenCalled()
-  })
+    const gridZoneOf = (provider: string, region: string) =>
+      entryFor(report, provider, region).gridZoneId
+    expect(gridZoneOf('AWS', 'eu-west-2')).toBe('GB')
+    expect(gridZoneOf('GCP', 'europe-west2')).toBe('GB')
+    expect(gridZoneOf('AZURE', 'uksouth')).toBe('GB')
+    expect(gridZoneOf('AWS', 'Unknown')).toBeNull()
+    expect(gridZoneOf('GCP', 'us')).toBeNull()
 
-  it('states the Electricity Maps v3 lookup and the zone of each region when a token is set, without calling Electricity Maps', async () => {
-    configure({ ELECTRICITY_MAPS_TOKEN: 'for-tests' })
-    const report = await new App().getGridIntensityCapabilities()
-
-    expect(report.legacyElectricityMaps).toMatchObject({
-      sourceId: 'electricitymaps-v3',
-      qualityTier: 'C',
-    })
-    const legacyZoneOf = (provider: string, region: string) =>
-      entryFor(report, provider, region).legacyElectricityMapsZoneId
-    expect(legacyZoneOf('AWS', 'eu-west-2')).toBe('GB')
-    expect(legacyZoneOf('GCP', 'europe-west2')).toBe('GB')
-    expect(legacyZoneOf('AZURE', 'uksouth')).toBe('GB')
-    expect(legacyZoneOf('AWS', 'Unknown')).toBeNull()
-    expect(legacyZoneOf('GCP', 'us')).toBeNull()
-    expect(entryFor(report, 'AWS', 'eu-west-2').sources).toEqual([
-      expect.objectContaining({ sourceId: 'static', bestTier: TIER_D }),
-    ])
     expect(fetchMock).not.toHaveBeenCalled()
   })
 

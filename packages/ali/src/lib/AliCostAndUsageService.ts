@@ -126,6 +126,13 @@ export default class AliCostAndUsageService {
           'memoryFootprintEstimate:' + JSON.stringify(memoryFootprintEstimate),
         )
         this.logger.info('row:' + JSON.stringify(row))
+        const co2e =
+          computeFootprintEstimate.co2e +
+          memoryFootprintEstimate.co2e +
+          storageFootprintEstimate.co2e +
+          networkingFootprintEstimate.co2e +
+          unknownFootprintEstimate.co2e +
+          embodiedEmissions.co2e
         serviceEstimates.push({
           cloudProvider: aliConfig.NAME,
           accountName: row.accountName,
@@ -138,16 +145,24 @@ export default class AliCostAndUsageService {
             networkingFootprintEstimate.kilowattHours +
             unknownFootprintEstimate.kilowattHours +
             embodiedEmissions.kilowattHours,
-          co2e:
-            computeFootprintEstimate.co2e +
-            memoryFootprintEstimate.co2e +
-            storageFootprintEstimate.co2e +
-            networkingFootprintEstimate.co2e +
-            unknownFootprintEstimate.co2e +
-            embodiedEmissions.co2e,
+          co2e,
           cost: row.cost,
           region: row.region,
           usesAverageCPUConstant: false,
+          // ADR 0024: the electricity alone, and the embodied emissions. A
+          // row with no co2e value has nothing to split and gets neither.
+          ...(Number.isFinite(co2e) && {
+            operationalKilowattHours:
+              computeFootprintEstimate.kilowattHours +
+              memoryFootprintEstimate.kilowattHours +
+              storageFootprintEstimate.kilowattHours +
+              networkingFootprintEstimate.kilowattHours +
+              (unknownFootprintEstimate.operationalKilowattHours ??
+                unknownFootprintEstimate.kilowattHours),
+            embodiedCo2e:
+              embodiedEmissions.co2e +
+              (unknownFootprintEstimate.embodiedCo2e ?? 0),
+          }),
         })
       })
       this.logger.info('serviceEstimates:' + JSON.stringify(serviceEstimates))
