@@ -40,7 +40,7 @@ const DAY_MS = 24 * 60 * 60 * 1000
  * The usage period the tiers are for. A day is the finest CCF produces
  * (GroupBy); hourly usage, and with it tier A, comes with design section 7.
  */
-export const REPORT_USAGE_GRANULARITY: Granularity = 'day'
+const REPORT_USAGE_GRANULARITY: Granularity = 'day'
 
 /**
  * The report behind the doctor command and GET /api/grid-intensity/capabilities
