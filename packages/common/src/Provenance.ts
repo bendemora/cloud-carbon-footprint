@@ -63,10 +63,13 @@ export interface Provenance {
   calibrationVersion?: string
   /**
    * True when the same configuration could give a better intensity for the
-   * row later (ADR 0025): the source did not cover the whole usage period
-   * yet, its values were preliminary, or a source ranked ahead of it could
-   * not be reached. Absent on a final row, and on rows estimated before the
-   * marker existed, which count as final. It does not change qualityTier.
+   * row later (ADR 0025): the source that answered, or one tried for the
+   * period before it, had not published the whole usage period yet, gave
+   * preliminary values, or could not be reached. So a row can be
+   * provisional although its own source covered the period, when a source
+   * ranked ahead of it will cover it later. Absent on a final row, and on
+   * rows estimated before the marker existed, which count as final. It does
+   * not change qualityTier.
    */
   isProvisional?: boolean
 }

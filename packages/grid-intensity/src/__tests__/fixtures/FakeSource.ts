@@ -57,6 +57,7 @@ export class FakeSource implements GridIntensitySource {
   /** Tests change these to let a later fetch return more, or settled, data. */
   omit: string[]
   preliminary: (periodStart: Date) => boolean
+  latest: Date | undefined
 
   constructor(private readonly options: FakeSourceOptions = {}) {
     this.id = options.id ?? 'fake'
@@ -71,6 +72,7 @@ export class FakeSource implements GridIntensitySource {
     this.failFetch = options.failFetch ?? false
     this.omit = options.omit ?? []
     this.preliminary = options.preliminary ?? (() => false)
+    this.latest = options.latest
   }
 
   async probe(): Promise<SourceStatus> {
@@ -92,7 +94,7 @@ export class FakeSource implements GridIntensitySource {
       zoneId,
       granularities: this.options.granularities ?? ['hour', 'day'],
       earliest: this.options.earliest,
-      latest: this.options.latest,
+      latest: this.latest,
       bases: ['location-consumption'],
       licence: this.licence,
     }
