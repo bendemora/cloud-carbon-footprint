@@ -160,6 +160,8 @@ const marked = (
  *
  * Stored points are read before a source's lookback window or a recent
  * failure is considered: those limit what is fetched, not what is used.
+ * A period a source had no usable point for is not asked for again within
+ * the capability TTL.
  * A source that covers only part of the period is kept as a fallback while
  * later sources are tried. Failures stop a zone's fetches for the
  * capability TTL. Each warning is logged at most once per source, zone and
@@ -193,6 +195,14 @@ export class GridIntensityResolver implements IntensityResolver {
   >()
   /** Warning id to the time it may be logged again. */
   private readonly warnedUntil = new Map<string, number>()
+  /**
+   * Periods a source was asked for and gave no usable point for, with the
+   * time until which they are not asked for again. Nothing is stored for
+   * such a period, and the resolver is called once per billing row, so
+   * without this every row of the region and period would repeat the
+   * request.
+   */
+  private readonly emptyUntil = new Map<string, number>()
   /** Stand-ins for capabilities that could not be probed (see capability()). */
   private readonly unprobed = new WeakSet<ZoneCapability>()
   /**
@@ -491,10 +501,13 @@ export class GridIntensityResolver implements IntensityResolver {
         ? await this.session.get(source.id, zoneId, start, end, granularity)
         : []
     const fetched: IntensityPoint[] = []
+    const seriesRef = `${source.id}|${zoneId}|${granularity}`
     const fetchable = this.failureOf(source.id, zoneId)
       ? []
-      : periodsCovering(start, end, granularity).filter((period) =>
-          isWithinWindow(period, capability),
+      : periodsCovering(start, end, granularity).filter(
+          (period) =>
+            isWithinWindow(period, capability) &&
+            !this.knownEmpty(seriesRef, period),
         )
     for (const range of missingPeriods(fetchable, [...held, ...stored])) {
       try {
@@ -504,7 +517,16 @@ export class GridIntensityResolver implements IntensityResolver {
           range.end,
           granularity,
         )
-        fetched.push(...this.usablePoints(source, zoneId, granularity, points))
+        const usable = this.usablePoints(source, zoneId, granularity, points)
+        fetched.push(...usable)
+        this.rememberEmpty(
+          seriesRef,
+          missingPeriods(
+            periodsCovering(range.start, range.end, granularity),
+            usable,
+          ),
+          granularity,
+        )
       } catch (error) {
         this.fail(source, zoneId, 'fetch', error)
         break
@@ -610,6 +632,28 @@ export class GridIntensityResolver implements IntensityResolver {
       `from grid intensity source ${source.id} for zone ${zoneId} outside 0 to ${MAX_G_CO2E_PER_KWH} gCO2e/kWh.`,
     )
     return valid
+  }
+
+  /** Whether the source gave nothing for the period within the TTL. */
+  private knownEmpty(seriesRef: string, period: Period): boolean {
+    const id = `${seriesRef}|${period.start.getTime()}`
+    const until = this.emptyUntil.get(id)
+    if (until === undefined) return false
+    if (until > this.now().getTime()) return true
+    this.emptyUntil.delete(id)
+    return false
+  }
+
+  /** Notes each period of the ranges as asked for and not served. */
+  private rememberEmpty(
+    seriesRef: string,
+    ranges: Period[],
+    granularity: Granularity,
+  ): void {
+    const until = this.now().getTime() + this.ttlMs
+    for (const range of ranges)
+      for (const period of periodsCovering(range.start, range.end, granularity))
+        this.emptyUntil.set(`${seriesRef}|${period.start.getTime()}`, until)
   }
 
   private warnDropped(id: string, dropped: number, rest: string): void {
