@@ -101,6 +101,33 @@ describe('NesoSource: the spacing of its requests', () => {
     expect(waits).toEqual([])
   })
 
+  it('measures the interval from when a request went out, not from its answer', async () => {
+    const source = pacedSource()
+    // The answer to the first day takes 700 ms by the source's clock.
+    api.respondTo(
+      `${NESO_API}/intensity/2026-10-01T00:00Z/2026-10-02T00:00Z`,
+      () => {
+        clockMs += 700
+        return jsonResponse({ data: [] })
+      },
+    )
+    await fetchDay(source, 0)
+    await fetchDay(source, 1)
+    expect(waits).toEqual([300])
+  })
+
+  it('never waits longer than the interval, also when the clock was set back', async () => {
+    const source = pacedSource()
+    await fetchDay(source, 0)
+    // A time correction, or a virtual machine that was resumed.
+    clockMs -= 3600 * 1000
+    await fetchDay(source, 1)
+    expect(waits).toEqual([1000])
+    // The request after that is spaced by the corrected clock.
+    await fetchDay(source, 2)
+    expect(waits).toEqual([1000, 1000])
+  })
+
   it('sends the requests of calls made at the same time one after another', async () => {
     const source = pacedSource()
     const results = await Promise.all([

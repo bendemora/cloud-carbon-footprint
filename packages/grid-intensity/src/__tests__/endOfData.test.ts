@@ -14,7 +14,7 @@ import {
   GridIntensityResolver,
   GridIntensityResolverOptions,
 } from '../GridIntensityResolver'
-import { FakeSource } from './fixtures/FakeSource'
+import { FakeSource, FakeSourceOptions } from './fixtures/FakeSource'
 
 const utc = (iso: string) => new Date(iso)
 const DAY_START = utc('2026-03-10T00:00:00.000Z')
@@ -28,15 +28,16 @@ const createResolver = (
   },
 ) => {
   let now = utc('2026-11-05T12:00:00.000Z')
+  const logger = { warn: jest.fn() }
   const resolver = new GridIntensityResolver({
-    logger: { warn: jest.fn() },
+    logger,
     now: () => now,
     ...options,
   })
   const advanceMinutes = (minutes: number) => {
     now = new Date(now.getTime() + minutes * 60 * 1000)
   }
-  return { resolver, advanceMinutes }
+  return { resolver, advanceMinutes, logger }
 }
 
 describe("the end of a source's data", () => {
@@ -121,6 +122,116 @@ describe("the end of a source's data", () => {
     })
     expect(live.capabilityCalls).toBe(1)
     expect(live.fetchCalls).toHaveLength(1)
+  })
+
+  it('keeps the answer in hand when the question goes wrong, and asks again an hour later', async () => {
+    const live = new FakeSource({ granularities: ['hour'], latest: NOON })
+    const { resolver, advanceMinutes, logger } = createResolver({
+      sources: [live],
+    })
+    const resolveDay = () =>
+      resolver.resolve('AWS', 'eu-west-2', DAY_START, DAY_END)
+    await resolveDay()
+
+    // The source has the whole day now, but cannot say so.
+    live.latest = DAY_END
+    live.failCapabilities = true
+    advanceMinutes(61)
+    const during = await resolveDay()
+    expect(live.capabilityCalls).toBe(2)
+    // The zone is not stopped: the day is served as before.
+    expect(during.points).toHaveLength(12)
+    expect(during.provenance).toMatchObject({ sourceId: 'fake' })
+    expect(logger.warn.mock.calls).toEqual([
+      [
+        'Grid intensity source fake could not say how far its data for zone GB reaches now: capability probe failed. Its earlier answer is used.',
+      ],
+    ])
+
+    // Not asked again within the hour, and not warned about again.
+    advanceMinutes(30)
+    await resolveDay()
+    expect(live.capabilityCalls).toBe(2)
+
+    live.failCapabilities = false
+    advanceMinutes(31)
+    const after = await resolveDay()
+    expect(live.capabilityCalls).toBe(3)
+    expect(after.points).toHaveLength(24)
+    expect(logger.warn).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the answer in hand when the question is answered with nothing', async () => {
+    const options: FakeSourceOptions = { granularities: ['hour'] }
+    const live = new FakeSource(options)
+    live.latest = NOON
+    const { resolver, advanceMinutes, logger } = createResolver({
+      sources: [live],
+    })
+    const resolveDay = () =>
+      resolver.resolve('AWS', 'eu-west-2', DAY_START, DAY_END)
+    await resolveDay()
+
+    options.unavailable = true
+    advanceMinutes(61)
+    const during = await resolveDay()
+    expect(live.capabilityCalls).toBe(2)
+    expect(during.points).toHaveLength(12)
+    expect(logger.warn.mock.calls).toEqual([
+      [
+        'Grid intensity source fake could not say how far its data for zone GB reaches now: it gave no answer for the zone. Its earlier answer is used.',
+      ],
+    ])
+
+    options.unavailable = false
+    live.latest = DAY_END
+    advanceMinutes(61)
+    await expect(resolveDay()).resolves.toMatchObject({
+      provenance: { qualityTier: 'B' },
+    })
+  })
+
+  it('stops the zone as before when the question at the end of the TTL fails', async () => {
+    const live = new FakeSource({ granularities: ['hour'], latest: NOON })
+    const { resolver, advanceMinutes, logger } = createResolver({
+      sources: [live],
+    })
+    await resolver.resolve('AWS', 'eu-west-2', DAY_BEFORE, DAY_START)
+
+    live.failCapabilities = true
+    advanceMinutes(24 * 60 + 1)
+    // The stored day is still served, from the answer the source gave last.
+    const stored = await resolver.resolve(
+      'AWS',
+      'eu-west-2',
+      DAY_BEFORE,
+      DAY_START,
+    )
+    expect(stored.points).toHaveLength(24)
+    expect(logger.warn.mock.calls).toEqual([
+      [
+        'Grid intensity source fake capability probe failed for zone GB: capability probe failed. Skipping it for 24 hours.',
+      ],
+    ])
+  })
+
+  it('is an answer for a whole TTL again when it was asked for early', async () => {
+    const live = new FakeSource({ granularities: ['hour'], latest: NOON })
+    const { resolver, advanceMinutes } = createResolver({ sources: [live] })
+    await resolver.resolve('AWS', 'eu-west-2', DAY_START, DAY_END)
+    live.latest = DAY_END
+    advanceMinutes(61)
+    await resolver.resolve('AWS', 'eu-west-2', DAY_START, DAY_END)
+    expect(live.capabilityCalls).toBe(2)
+
+    // 24 hours and a minute after the first question, and 23 hours after
+    // the second: the second answer still stands.
+    advanceMinutes(23 * 60)
+    await resolver.resolve('AWS', 'eu-west-2', DAY_START, DAY_END)
+    expect(live.capabilityCalls).toBe(2)
+    advanceMinutes(61)
+    await resolver.resolve('AWS', 'eu-west-2', DAY_START, DAY_END)
+    expect(live.capabilityCalls).toBe(3)
   })
 
   it('is kept for the whole TTL when the source gives none', async () => {

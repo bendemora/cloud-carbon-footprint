@@ -16,8 +16,12 @@ import {
 } from '../resolveEmissionsFactors'
 import { NesoSource } from '../sources/NesoSource'
 import { StaticFactorTable, StaticSource } from '../sources/StaticSource'
-import { ProviderRegion } from '../types'
+import { InMemoryIntensityStore } from '../stores/InMemoryIntensityStore'
+import { LocalIntensityStore } from '../stores/LocalIntensityStore'
+import { IntensityStore, ProviderRegion } from '../types'
 import {
+  generatedRange,
+  jsonResponse,
   mockNesoApi,
   NESO_API,
   NesoApiMock,
@@ -71,19 +75,24 @@ describe('NesoSource behind the resolver', () => {
     api.assertNoUnknownRequests()
   })
 
-  const createResolver = () => {
+  const createResolver = ({
+    store,
+    fetch = api.fetch,
+    now = () => NOW,
+  }: {
+    store?: IntensityStore
+    fetch?: NesoApiMock['fetch']
+    now?: () => Date
+  } = {}) => {
     const logger = { warn: jest.fn() }
     const resolver = new GridIntensityResolver({
       sources: [
-        new NesoSource({
-          fetch: api.fetch,
-          now: () => NOW,
-          minRequestIntervalMs: 0,
-        }),
-        new StaticSource({ AWS: awsTable }, () => NOW),
+        new NesoSource({ fetch, now, minRequestIntervalMs: 0 }),
+        new StaticSource({ AWS: awsTable }, now),
       ],
+      ...(store ? { store } : {}),
       logger,
-      now: () => NOW,
+      now,
     })
     return { resolver, logger }
   }
@@ -231,6 +240,192 @@ describe('NesoSource behind the resolver', () => {
       sourceId: 'neso',
       isEstimated: true,
       qualityTier: 'C',
+    })
+  })
+
+  it('sends one request when several calls resolve the same day at once', async () => {
+    api.generate(actualOf)
+    const { resolver } = createResolver()
+
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        resolver.resolve('AWS', 'eu-west-2', DAY_START, DAY_END),
+      ),
+    )
+
+    expect(results.map((result) => result.gCO2ePerKWh)).toEqual(
+      Array.from({ length: 8 }, () => DAY_MEAN),
+    )
+    expect(api.urls()).toEqual([DAY_URL])
+  })
+
+  it('keeps the days it read when a later request of a month fails, and a new process asks only for the rest', async () => {
+    // October 2026 as one usage period is three requests. The third is
+    // refused, in the form a gateway answers in (not recorded).
+    const OCTOBER = utc('2026-10-01T00:00:00.000Z')
+    const NOVEMBER = utc('2026-11-01T00:00:00.000Z')
+    const urls = [
+      `${NESO_API}/intensity/2026-10-01T00:00Z/2026-10-15T00:00Z`,
+      `${NESO_API}/intensity/2026-10-15T00:00Z/2026-10-29T00:00Z`,
+      `${NESO_API}/intensity/2026-10-29T00:00Z/2026-11-01T00:00Z`,
+    ]
+    api.generate(actualOf)
+    api.respondTo(urls[2], () =>
+      jsonResponse({ message: 'Too Many Requests' }, 429),
+    )
+    const store = new InMemoryIntensityStore()
+    const { resolver, logger } = createResolver({ store })
+
+    const result = await resolver.resolve('AWS', 'eu-west-2', OCTOBER, NOVEMBER)
+
+    expect(api.urls()).toEqual(urls)
+    // 28 of the 31 days.
+    expect(result.points).toHaveLength(28 * 24)
+    expect(result.provenance).toMatchObject({
+      sourceId: 'neso',
+      isEstimated: true,
+      qualityTier: 'C',
+      isProvisional: true,
+    })
+    expect(logger.warn.mock.calls).toEqual([
+      [
+        'Grid intensity source neso fetch failed for zone national: NESO Carbon Intensity API: GET /intensity/2026-10-29T00:00Z/2026-11-01T00:00Z failed: HTTP 429: Too Many Requests. Skipping it for 24 hours.',
+      ],
+    ])
+
+    // A later process on the same store, with NESO answering again.
+    const later = mockNesoApi()
+    later.generate(actualOf)
+    const again = await createResolver({
+      store,
+      fetch: later.fetch,
+    }).resolver.resolve('AWS', 'eu-west-2', OCTOBER, NOVEMBER)
+
+    expect(later.urls()).toEqual([urls[2]])
+    expect(again.points).toHaveLength(31 * 24)
+    expect(again.gCO2ePerKWh).toBe(DAY_MEAN)
+    expect(again.provenance).toMatchObject({
+      sourceId: 'neso',
+      isEstimated: false,
+    })
+    expect(again.provenance).not.toHaveProperty('isProvisional')
+    later.assertNoUnknownRequests()
+  })
+
+  it('warns and uses the static factor when no period of an answer is in the form it knows', async () => {
+    // The recorded shape, with the datetimes written another way.
+    api.respondTo(DAY_URL, () =>
+      jsonResponse({
+        data: generatedRange(DAY_START, DAY_END, actualOf).data.map(
+          (period) => ({
+            ...period,
+            from: period.from.replace('Z', '+00:00'),
+            to: period.to.replace('Z', '+00:00'),
+          }),
+        ),
+      }),
+    )
+    const { resolver, logger } = createResolver()
+
+    const result = await resolver.resolve(
+      'AWS',
+      'eu-west-2',
+      DAY_START,
+      DAY_END,
+    )
+    await resolver.resolve('AWS', 'eu-west-2', DAY_START, DAY_END)
+
+    expect(result.gCO2ePerKWh).toBe(305)
+    expect(result.provenance).toMatchObject({
+      sourceId: 'static',
+      qualityTier: 'D',
+      isProvisional: true,
+    })
+    expect(logger.warn.mock.calls).toEqual([
+      [
+        'Grid intensity source neso fetch failed for zone national: NESO Carbon Intensity API: GET /intensity/2026-11-03T00:00Z/2026-11-04T00:00Z failed: HTTP 200 with 49 periods, none of them in the expected form. Skipping it for 24 hours.',
+      ],
+    ])
+    expect(api.urls()).toEqual([DAY_URL])
+  })
+
+  describe('as time goes by in one process', () => {
+    let nowMs: number
+    const now = () => new Date(nowMs)
+    const MINUTE_MS = 60 * 1000
+
+    beforeEach(() => {
+      nowMs = NOW.getTime()
+    })
+
+    it('asks again after an hour for an hour that was late, and then has the whole day', async () => {
+      // Yesterday, of which the hour from 22:00 has only one half so far.
+      let late = true
+      api.generate((periodStart) =>
+        late && periodStart.toISOString() === '2026-11-11T22:30:00.000Z'
+          ? null
+          : actualOf(periodStart),
+      )
+      const { resolver } = createResolver({ now })
+      const resolveYesterday = () =>
+        resolver.resolve(
+          'AWS',
+          'eu-west-2',
+          utc('2026-11-11T00:00:00.000Z'),
+          utc('2026-11-12T00:00:00.000Z'),
+        )
+
+      const first = await resolveYesterday()
+      expect(first.points).toHaveLength(23)
+      expect(first.provenance).toMatchObject({
+        qualityTier: 'C',
+        isProvisional: true,
+      })
+
+      nowMs += 59 * MINUTE_MS
+      await resolveYesterday()
+      expect(api.urls()).toHaveLength(1)
+
+      late = false
+      nowMs += 2 * MINUTE_MS
+      const later = await resolveYesterday()
+      expect(api.urls()).toEqual([
+        `${NESO_API}/intensity/2026-11-11T00:00Z/2026-11-12T00:00Z`,
+        `${NESO_API}/intensity/2026-11-11T22:00Z/2026-11-11T23:00Z`,
+      ])
+      expect(later.points).toHaveLength(24)
+      expect(later.gCO2ePerKWh).toBe(DAY_MEAN)
+      expect(later.provenance).toMatchObject({ qualityTier: 'B' })
+      expect(later.provenance).not.toHaveProperty('isProvisional')
+    })
+
+    it('picks up, an hour later, the hour NESO has offered since', async () => {
+      api.generate(actualOf)
+      const { resolver } = createResolver({ now })
+      const resolveToday = () =>
+        resolver.resolve(
+          'AWS',
+          'eu-west-2',
+          utc('2026-11-12T00:00:00.000Z'),
+          utc('2026-11-13T00:00:00.000Z'),
+        )
+
+      // At 09:30 the data ends at 07:00.
+      await expect(resolveToday()).resolves.toMatchObject({
+        points: { length: 7 },
+      })
+      // At 10:29 the answer about the end of the data is not an hour old.
+      nowMs += 59 * MINUTE_MS
+      await resolveToday()
+      expect(api.urls()).toHaveLength(1)
+      // At 10:31 it is, and the data ends at 08:00.
+      nowMs += 2 * MINUTE_MS
+      const later = await resolveToday()
+      expect(api.urls()).toEqual([
+        `${NESO_API}/intensity/2026-11-12T00:00Z/2026-11-12T07:00Z`,
+        `${NESO_API}/intensity/2026-11-12T07:00Z/2026-11-12T08:00Z`,
+      ])
+      expect(later.points).toHaveLength(8)
     })
   })
 
@@ -410,6 +605,47 @@ describe('resolveEmissionsFactors with GRID_INTENSITY_SOURCES=neso,static', () =
     await expect(readdir(join(directory, 'neso', 'national'))).resolves.toEqual(
       ['2026-11.hour.json'],
     )
+  })
+
+  it('sends one request when calls for one region are made at once, as recommendations are', async () => {
+    // packages/gcp prices every recommendation under one Promise.all, and
+    // each asks the adapter for the same day. The spacing is the default
+    // second, so a second request would also show as a wait.
+    api.generate(actualOf)
+
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        resolveEmissionsFactors('GCP', 'europe-west2', DAY_START, DAY_END, {
+          factors: { 'europe-west2': 0.000106 },
+        }),
+      ),
+    )
+
+    for (const result of results) {
+      expect(result.factors).toEqual({ 'europe-west2': 0.0001235 })
+      expect(result.provenance).toMatchObject({ sourceId: 'neso' })
+    }
+    expect(api.urls()).toEqual([DAY_URL])
+  })
+
+  it('reads the store file once for the rows of one region and day', async () => {
+    api.generate(actualOf)
+    const read = jest.spyOn(LocalIntensityStore.prototype, 'get')
+    try {
+      for (let row = 0; row < 50; row++)
+        await resolveEmissionsFactors(
+          'AWS',
+          'eu-west-2',
+          DAY_START,
+          DAY_END,
+          awsTable,
+        )
+      // Before the hours are fetched, and once after they are stored.
+      expect(read).toHaveBeenCalledTimes(2)
+      expect(api.urls()).toEqual([DAY_URL])
+    } finally {
+      read.mockRestore()
+    }
   })
 
   it('leaves a region outside Great Britain on the static factors, and asks NESO nothing', async () => {

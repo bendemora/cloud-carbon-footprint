@@ -13,6 +13,7 @@ import {
   NESO_ZONES,
   NesoSource,
 } from '../sources/NesoSource'
+import { PartialFetchError, partialPointsOf } from '../PartialFetchError'
 import { CloudProvider, IntensityPoint } from '../types'
 import {
   generatedRange,
@@ -479,6 +480,119 @@ describe('NesoSource', () => {
     })
   })
 
+  describe('values and periods the spike did not see', () => {
+    it('treats an actual above the data quality bound as missing', async () => {
+      // Halves of 2900 and 50 have a mean of 1475, which is inside the
+      // bound of 1500. 1500 itself is inside it.
+      api.respondTo(RANGE_URL, () =>
+        jsonResponse({
+          data: [
+            period('2026-11-03T00:00Z', '2026-11-03T00:30Z', 2900),
+            period('2026-11-03T00:30Z', '2026-11-03T01:00Z', 50),
+            period('2026-11-03T01:00Z', '2026-11-03T01:30Z', 1500),
+            period('2026-11-03T01:30Z', '2026-11-03T02:00Z', 121),
+          ],
+        }),
+      )
+      await expect(fetchRange()).resolves.toEqual([
+        hourly('2026-11-03T01:00:00.000Z', 810.5),
+      ])
+    })
+
+    it('reads periods in any order, and the last usable value of one that is sent twice', async () => {
+      api.respondTo(RANGE_URL, () =>
+        jsonResponse({
+          data: [
+            period('2026-11-03T01:30Z', '2026-11-03T02:00Z', 120),
+            period('2026-11-03T00:00Z', '2026-11-03T00:30Z', 128),
+            period('2026-11-03T01:00Z', '2026-11-03T01:30Z', 121),
+            period('2026-11-03T00:30Z', '2026-11-03T01:00Z', 126),
+            // Sent again with another value, and then with none, which
+            // does not take the value away.
+            period('2026-11-03T00:30Z', '2026-11-03T01:00Z', 130),
+            period('2026-11-03T00:30Z', '2026-11-03T01:00Z', null),
+          ],
+        }),
+      )
+      await expect(fetchRange()).resolves.toEqual([
+        hourly('2026-11-03T00:00:00.000Z', 129),
+        hourly('2026-11-03T01:00:00.000Z', 120.5),
+      ])
+    })
+
+    describe('an answer in which no period is in the expected form', () => {
+      const recorded = (
+        nesoFixture('national-range').response.body as { data: NesoPeriod[] }
+      ).data
+
+      it.each<[string, (period: NesoPeriod) => unknown]>([
+        [
+          'datetimes in another form',
+          (p) => ({
+            ...p,
+            from: p.from.replace('Z', '+00:00'),
+            to: p.to.replace('Z', '+00:00'),
+          }),
+        ],
+        [
+          'the actual value under another name',
+          ({ from, to, intensity: { forecast, actual, index } }) => ({
+            from,
+            to,
+            intensity: { forecast, outturn: actual, index },
+          }),
+        ],
+        [
+          'the actual value in a string',
+          (p) => ({
+            ...p,
+            intensity: { ...p.intensity, actual: String(p.intensity.actual) },
+          }),
+        ],
+        [
+          'periods of an hour',
+          (p) => ({
+            ...p,
+            to: `${new Date(Date.parse(p.from) + 3600 * 1000).toISOString().slice(0, 16)}Z`,
+          }),
+        ],
+      ])('is a failure and not an empty answer: %s', async (_case, change) => {
+        expect(recorded).toHaveLength(5)
+        api.respondTo(RANGE_URL, () =>
+          jsonResponse({ data: recorded.map(change) }),
+        )
+        await expect(fetchRange()).rejects.toThrow(
+          new Error(
+            failed(
+              'HTTP 200 with 5 periods, none of them in the expected form',
+            ),
+          ),
+        )
+      })
+
+      it('says so for one period too', async () => {
+        api.respondTo(RANGE_URL, () => jsonResponse({ data: [{ at: 'x' }] }))
+        await expect(fetchRange()).rejects.toThrow(
+          new Error(
+            failed('HTTP 200 with 1 period, none of them in the expected form'),
+          ),
+        )
+      })
+
+      it('is not a failure while one period is in the expected form', async () => {
+        api.respondTo(RANGE_URL, () =>
+          jsonResponse({
+            data: [
+              ...recorded.slice(0, 4).map(({ from, to }) => ({ from, to })),
+              recorded[4],
+            ],
+          }),
+        )
+        await expect(fetchRange()).resolves.toEqual([])
+      })
+    })
+  })
+
   describe('the start of the series and empty ranges', () => {
     it('gives the first hour the series has', async () => {
       // The fixture is the first three half hours of a range of 30 days,
@@ -652,23 +766,27 @@ describe('NesoSource', () => {
 
     it.each([
       [
-        'a JSON body without an error property',
-        () => jsonResponse({ message: 'Forbidden' }, 403),
-        403,
+        // The form a gateway in front of an API answers in. Not recorded.
+        'a JSON body with a message and no error property',
+        () => jsonResponse({ message: 'Too Many Requests' }, 429),
+        'HTTP 429: Too Many Requests',
+      ],
+      [
+        'a JSON body with neither',
+        () => jsonResponse({ status: 'refused' }, 403),
+        'HTTP 403',
       ],
       [
         'a body that is not JSON',
         () => new Response('<html>Bad Gateway</html>', { status: 502 }),
-        502,
+        'HTTP 502',
       ],
-      ['no body', () => new Response(null, { status: 503 }), 503],
+      ['no body', () => new Response(null, { status: 503 }), 'HTTP 503'],
     ])(
       'throws on a status that is not 2xx, with %s',
-      async (_case, respond, status) => {
+      async (_case, respond, reason) => {
         api.respondTo(RANGE_URL, respond)
-        await expect(fetchRange()).rejects.toThrow(
-          new Error(failed(`HTTP ${status}`)),
-        )
+        await expect(fetchRange()).rejects.toThrow(new Error(failed(reason)))
       },
     )
 
@@ -718,6 +836,43 @@ describe('NesoSource', () => {
       )
       expect(error.cause).toBe(rejection)
     })
+
+    it.each([
+      [
+        // What Node gives when a host has several addresses and none can be
+        // reached: an AggregateError with an empty message.
+        'a code and one error for each address',
+        Object.assign(
+          new AggregateError(
+            [
+              new Error('connect EAFNOSUPPORT ::1:443'),
+              new Error('connect ECONNREFUSED 127.0.0.1:443'),
+            ],
+            '',
+          ),
+          { code: 'ECONNREFUSED' },
+        ),
+        'fetch failed: ECONNREFUSED: connect EAFNOSUPPORT ::1:443; connect ECONNREFUSED 127.0.0.1:443',
+      ],
+      [
+        'a code only',
+        Object.assign(new Error(''), { code: 'UND_ERR_SOCKET' }),
+        'fetch failed: UND_ERR_SOCKET',
+      ],
+      ['nothing to say', new Error(''), 'fetch failed'],
+      ['a value that is not an error', 'ECONNRESET', 'fetch failed'],
+    ])(
+      'says what it can when the cause of a network failure has %s',
+      async (_case, cause, reason) => {
+        api.respondTo(RANGE_URL, () => {
+          throw new TypeError('fetch failed', { cause })
+        })
+        await expect(fetchRange()).rejects.toHaveProperty(
+          'message',
+          failed(reason),
+        )
+      },
+    )
 
     it.each([
       ['an error that has no cause', new Error('socket hang up')],
@@ -785,9 +940,12 @@ describe('NesoSource', () => {
 
   describe('a range longer than one request may cover', () => {
     const DAY_MS = 24 * 3600 * 1000
-    /** A value that is different for every half hour of a 31 day range. */
+    /**
+     * A value that is different for every half hour of a 31 day range, and
+     * inside the data quality bound: 100 to 1499.5.
+     */
     const actualOf = (periodStart: Date): number =>
-      100 + ((periodStart.getTime() / (30 * 60 * 1000)) % 1500)
+      100 + ((periodStart.getTime() / (30 * 60 * 1000)) % 2800) / 2
 
     it('is split into consecutive requests of at most 14 days, sent one after another', async () => {
       // The bodies are generated in the recorded shape: the fixtures hold
@@ -852,6 +1010,88 @@ describe('NesoSource', () => {
         ),
       ).rejects.toThrow('HTTP 400')
       expect(api.urls()).toHaveLength(2)
+    })
+
+    it('gives the hours of the requests that were answered, with the failure of a later one', async () => {
+      api.generate(actualOf)
+      api.serveAs(
+        `${NESO_API}/intensity/2026-10-15T00:00Z/2026-10-29T00:00Z`,
+        nesoFixture('error-range-too-long'),
+      )
+
+      const error: PartialFetchError = await source
+        .fetch(
+          'national',
+          utc('2026-10-01T00:00:00.000Z'),
+          utc('2026-11-01T00:00:00.000Z'),
+          'hour',
+        )
+        .catch((thrown) => thrown)
+
+      expect(error).toBeInstanceOf(PartialFetchError)
+      expect(error.name).toBe('PartialFetchError')
+      expect(error.message).toMatch(
+        /^NESO Carbon Intensity API: GET \/intensity\/2026-10-15T00:00Z\/2026-10-29T00:00Z failed: HTTP 400: /,
+      )
+      expect(error.cause).toBeInstanceOf(Error)
+      expect((error.cause as Error).message).toBe(error.message)
+      // The first request's 14 days, and nothing of the second.
+      expect(error.points).toHaveLength(14 * 24)
+      expect(error.points[0]).toEqual(
+        hourly(
+          '2026-10-01T00:00:00.000Z',
+          (actualOf(utc('2026-10-01T00:00:00.000Z')) +
+            actualOf(utc('2026-10-01T00:30:00.000Z'))) /
+            2,
+        ),
+      )
+      expect(error.points[14 * 24 - 1].periodEnd).toEqual(
+        utc('2026-10-15T00:00:00.000Z'),
+      )
+      expect(partialPointsOf(error)).toBe(error.points)
+    })
+
+    it('throws the failure as it is when no request before it was answered', async () => {
+      api.generate(actualOf)
+      api.serveAs(
+        `${NESO_API}/intensity/2026-10-01T00:00Z/2026-10-15T00:00Z`,
+        nesoFixture('error-range-too-long'),
+      )
+
+      const error: Error = await source
+        .fetch(
+          'national',
+          utc('2026-10-01T00:00:00.000Z'),
+          utc('2026-11-01T00:00:00.000Z'),
+          'hour',
+        )
+        .catch((thrown) => thrown)
+
+      expect(error).not.toBeInstanceOf(PartialFetchError)
+      expect(error.message).toContain('HTTP 400')
+      expect(partialPointsOf(error)).toEqual([])
+      expect(api.urls()).toHaveLength(1)
+    })
+
+    it('arms a timeout of its own for each request', async () => {
+      const timeout = jest.spyOn(AbortSignal, 'timeout')
+      try {
+        api.generate(actualOf)
+        await source.fetch(
+          'national',
+          utc('2026-10-01T00:00:00.000Z'),
+          utc('2026-11-01T00:00:00.000Z'),
+          'hour',
+        )
+        expect(timeout).toHaveBeenCalledTimes(3)
+        const signals = api.inits().map((init) => init?.signal)
+        expect(new Set(signals).size).toBe(3)
+        signals.forEach((signal, request) =>
+          expect(signal).toBe(timeout.mock.results[request].value),
+        )
+      } finally {
+        timeout.mockRestore()
+      }
     })
 
     it('generates bodies that hold the periods the recorded ones hold', () => {
@@ -1024,11 +1264,61 @@ describe('NesoSource', () => {
       })
     })
 
-    it('does not look at the values it is sent', async () => {
-      api.respondTo(PROBE_URL, () => jsonResponse({ data: 'anything' }))
+    it.each([
+      [
+        'a half hour with no actual yet',
+        [period('2026-11-12T08:30Z', '2026-11-12T09:00Z', null)],
+      ],
+      [
+        'values that cannot be right',
+        [period('2026-11-12T08:30Z', '2026-11-12T09:00Z', -1)],
+      ],
+      ['no period', []],
+    ])(
+      'looks at the form of what it is sent and not at the values: %s',
+      async (_case, data) => {
+        api.respondTo(PROBE_URL, () => jsonResponse({ data }))
+        await expect(source.probe()).resolves.toEqual({
+          reachable: true,
+          authenticated: true,
+        })
+      },
+    )
+
+    it.each([
+      [
+        'data that is not a list',
+        { data: 'anything' },
+        'data that is not a list',
+      ],
+      [
+        'datetimes in another form',
+        {
+          data: [
+            period('2026-11-12T08:30+00:00', '2026-11-12T09:00+00:00', 120),
+          ],
+        },
+        'a period that is not in the expected form',
+      ],
+      [
+        'the actual value under another name',
+        {
+          data: [
+            {
+              from: '2026-11-12T08:30Z',
+              to: '2026-11-12T09:00Z',
+              intensity: { forecast: 120, outturn: 118, index: 'low' },
+            },
+          ],
+        },
+        'a period that is not in the expected form',
+      ],
+    ])('is not reachable when the answer has %s', async (_case, body, what) => {
+      api.respondTo(PROBE_URL, () => jsonResponse(body))
       await expect(source.probe()).resolves.toEqual({
-        reachable: true,
-        authenticated: true,
+        reachable: false,
+        authenticated: false,
+        message: `NESO Carbon Intensity API: GET /intensity failed: HTTP 200 with ${what}`,
       })
     })
   })
