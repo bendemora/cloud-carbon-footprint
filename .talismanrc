@@ -506,6 +506,8 @@ fileignoreconfig:
   checksum: 6cc2382f088431f6993aab7e127d63b5a41d8a5a0a6f3def4fdcc4be0496cb81
 - filename: .adr/0026-grid_intensity_from_primary_publishers.md
   checksum: 5367290b507a0f461a5edea530d47911a154bda13fd8c1506c285af0572d7300
+- filename: docs/design/research/2026-11-primary-publishers.md
+  checksum: 3e2655c4d066ce8baa6feb26968e13ad86bdb10291cbbbceec0d15e19642125d
 scopeconfig:
 - scope: node
 version: "1.0"

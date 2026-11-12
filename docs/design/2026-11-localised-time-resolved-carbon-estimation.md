@@ -98,6 +98,24 @@ Facts below were checked against the sources' own documentation on 2026-11-05 un
 
 Every live source built in reads a primary publisher: the system operator, market operator or public agency that publishes the data, or the official body it publishes through, as ENTSO-E is for the European operators and EIA for the United States balancing authorities (ADR 0026). The static factors are not live data; they are constants that upstream CCF compiled, and section 14, item 9, records where the Google Cloud ones come from. Services that republish or model the publishers' data are not built in. Electricity Maps and WattTime, which earlier versions of this table listed, are the two that were considered. A deployment that holds such data can load it through the file source (5.4). Sources not in this list are added by implementing one interface (section 6.1).
 
+#### Candidates from the survey of 2026-11-06
+
+A desk survey looked for a free primary publisher of hourly data for each of the 48 grid zones in the registry (`docs/design/research/2026-11-primary-publishers.md`). It found one whose licence, as found, allows commercial use for 19 zones: Great Britain and the eight United States zones through the sources above, and the ten zones below. These rows are leads, not checked facts. Most publishers' own pages could not be opened from the session that ran the survey, so each row rests on search results and third-party code, and each needs a short spike (licence and endpoint read on the publisher's pages, fixtures recorded) before a source is built, as NESO had.
+
+| Publisher | Grid zones | What it publishes | Licence as found | Note |
+|---|---|---|---|---|
+| RTE eCO2mix, through the ODRE portal | FR | Intensity and mix, 15 to 30 min, from 2012 | Licence Ouverte 2.0 | Intensity is published, so no factor table is needed. Production basis, direct factors |
+| SMARD (Bundesnetzagentur) | DE | Mix, 15 min | CC BY 4.0 | Energy-Charts (Fraunhofer ISE) publishes the same zone, also CC BY 4.0 |
+| Elia Open Data | BE | Intensity on a production and a consumption basis | CC BY 4.0 | Resolution and start date not confirmed |
+| Fingrid Open Data | FI | Intensity on both bases, 3 min and 15 min | CC BY 4.0 | |
+| Elhub | NO-NO1, NO-NO2 | Mix by production group, hourly, from 2021 | CC BY 4.0 | |
+| eSett Open Data | SE-SE3, also FI and NO | Mix, hourly, from May 2017 | CC0, from an old copy of the homepage | Thermal generation is not split by fuel |
+| ONS open data portal | BR-CS | Generation by plant, hourly | CC BY 4.0, by the AWS Open Data Registry entry | That the subsystem matches BR-CS is inferred |
+| Electricity Authority EMI | NZ | Generation by plant, half-hourly | CC BY 4.0 by default | Needs a table of each plant's fuel |
+| Taipower, through data.gov.tw | TW | Generation by unit, 10 min | Taiwan Open Government Data License 1.0 | Needs a table of each unit's fuel; depth of the archive unclear |
+
+For the EU zones among these, the operator is the primary publisher in the sense of ADR 0026 and ENTSO-E, which republishes the operators' reports, is the fallback. ENTSO-E remains the only route found for IE, NL, ES, IT-NO and PL, which is why its licence question (section 14, item 2) matters. Sixteen zones have free hourly data whose licence is unresolved or refuses commercial use, India's three zones have daily data only, and for ten zones nothing was found; the survey lists them.
+
 ### 5.2 Electricity Maps (removed)
 
 This section described the Electricity Maps v4 source. ADR 0026 cancelled that source and removed the v3 lookup the fork inherited (section 3.3), so there is nothing to build here. The heading is kept so that section numbers used elsewhere stay valid.
@@ -466,7 +484,9 @@ Items to confirm against live services before the phase that depends on them. Ea
 
 1. Electricity Maps v4 (response field names for `past-range` and `zones`, the accepted `dataCenterProvider` values, what the free tier returns from `/v4/zones`, the terms on caching fetched data). Closed on 2026-11-12 without an answer: Electricity Maps is not used (ADR 0026). What was learned before that is in the ADR: the project's token was refused by the v3 `carbon-intensity/past` endpoint on 2026-11-05 (PR #14).
 2. ENTSO-E: that document type A75 (actual generation per production type) is on the free re-use list; token request lead time; per-zone resolution (PT15M vs PT60M). (Phase 2)
+   Not answered. The survey of 2026-11-06 (`docs/design/research/2026-11-primary-publishers.md`, section 5) found that CC BY 4.0 was added to the free re-use list on 2022-02-18, but no result showed whether item 16.1.B&C is on the current list, and ENTSO-E's own pages could not be opened. Third-party guides give about three working days for a token, requested by email to transparency@entsoe.eu, which is also where to ask the licence question. Until the answer is in writing the ENTSO-E source declares a licence that needs acknowledgement.
 3. EIA: exact route (`electricity/rto/fuel-type-data` assumed), facets (`respondent`, `fueltype`), throttling thresholds. (Phase 2)
+   Added by the survey: EIA also publishes hourly CO2 emissions and intensity, for generated and for consumed electricity, in a Grid Monitor spreadsheet per balancing authority, from 2018-07-01 (by the documentation of the PUDL and gridstatus projects; the files were not opened). Check whether the API serves those series, because they would give United States intensity without the factor table.
 4. NESO: regional endpoint path and region ids; whether "actual" regional values exist or only forecasts for regions. (Phase 2)
    Closed on 2026-11-10 by the spike in `docs/design/spikes/2026-11-neso.md`: regional values are forecasts only, and actual values exist only in the national series. Section 5.1 carries the result.
 5. AWS CUR hourly: whether the EPEX report is hourly; Athena result-set sizes and cost at hourly grouping. (Phase 3)
@@ -477,6 +497,8 @@ Items to confirm against live services before the phase that depends on them. Ea
    Added on 2026-11-12: Google's page for these figures (https://cloud.google.com/sustainability/region-carbon) says the hourly grid mix and carbon intensity data behind them is from Electricity Maps. The tables are therefore a place where Electricity Maps data still reaches an estimate, at one remove, and the only one found (ADR 0026). Whether to replace them with factors from the sources the AWS and Azure tables use, or from a primary publisher, changes every Google Cloud estimate in the default configuration, so it is decided with the model version in section 9.
 10. MongoDB: the intensity store and the estimates cache against a real server (recovery after a failed first connection, the unique index, a period of 50,000 rows). PRs #13, #15 and #17 record these as checked against mocks only. (Before the first live source)
 11. Open sources: how soon after an hour each one publishes a settled value, and whether it revises values later. This sets how long a result stays provisional (ADR 0025). (Phase 2)
+12. Survey candidates (section 5.1): for each publisher, the licence on the dataset's own page, the endpoint, the resolution, the depth of the history and the accounting basis. One short spike per publisher, with recorded fixtures, as for NESO. The claims that rest on the weakest evidence are listed in section 6 of `docs/design/research/2026-11-primary-publishers.md`. (Before each source is built)
+13. Grid zone registry: each region's zone against the provider's own description of where the region is and the territory of the grid operator. The inherited mappings were never checked. Section 5.5 names one pair that looks inconsistent (AWS `us-east-2` and GCP `us-east5`) and six entries on which an open data centre list differs from the registry. (Before the EIA source)
 
 ### Deferred work recorded in pull requests
 
@@ -539,6 +561,7 @@ Found during Phase 1 and left for later. Listed here so that it is not lost in p
 
 ## Appendix B: references
 
+- Survey of primary publishers, 2026-11-06: `docs/design/research/2026-11-primary-publishers.md`
 - NESO Carbon Intensity API: https://carbonintensity.org.uk/ (CC BY 4.0)
 - ENTSO-E Transparency Platform knowledge base: https://transparency.entsoe.eu/content/static_content/Static%20content/knowledge%20base/knowledge%20base.html
 - EIA Open Data API documentation: https://www.eia.gov/opendata/documentation.php and reuse policy: https://www.eia.gov/about/copyrights_reuse.php
