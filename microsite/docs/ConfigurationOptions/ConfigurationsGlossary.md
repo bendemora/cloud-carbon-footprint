@@ -168,11 +168,11 @@ See [Azure Performance Considerations](./PerformanceConsiderations.md#azure-perf
 
 | Variable                                | Example Value | Type   | Notes                                                                                                                                                                              |
 | --------------------------------------- | ------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GRID_INTENSITY_SOURCES                  | static        | string | The sources of grid carbon intensity, in order of preference, comma separated. The default, `static`, is the default emissions factors. See [Emissions Factors](EmissionsFactors.md). |
+| GRID_INTENSITY_SOURCES                  | static        | string | The sources of grid carbon intensity, in order of preference, comma separated. The default, `static`, is the default emissions factors. `neso,static` adds the NESO data for Great Britain. See [Emissions Factors](EmissionsFactors.md). |
 | GRID_INTENSITY_LICENCE_ACKNOWLEDGEMENTS |               | string | Source ids you state you are licensed to use, comma separated. Needed for a source whose licence is commercial, non-commercial or custom.                                          |
 | GRID_INTENSITY_STORE                    | LOCAL         | string | Where fetched intensity values are kept: `LOCAL` or `MONGODB`.                                                                                                                     |
 | GRID_INTENSITY_STORE_PATH               | .ccf/grid-intensity | string | Directory of the `LOCAL` store.                                                                                                                                              |
-| GRID_INTENSITY_CAPABILITY_TTL_HOURS     | 24            | number | How long CCF remembers what a source said it can deliver, and a source's failures.                                                                                                 |
+| GRID_INTENSITY_CAPABILITY_TTL_HOURS     | 24            | number | How long CCF remembers what a source said it can deliver, a source's failures, and that a source had no data for a period. Two things are asked again after an hour: where a live source's data ends, and a period with no data that ended within this many hours. |
 
 `ELECTRICITY_MAPS_TOKEN`, which upstream CCF reads, is no longer read. See [Emissions Factors](EmissionsFactors.md#electricity-maps-is-no-longer-called).
 

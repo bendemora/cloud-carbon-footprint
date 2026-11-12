@@ -17,10 +17,10 @@ import { mergeProvenance } from './provenance'
 export default interface FootprintEstimate {
   timestamp: Date
   /**
-   * A legacy total (ADR 0024): the electricity the usage is modelled to
-   * consume, plus its embodied emissions expressed as energy at the grid
-   * factor applied to the row. With an intensity that varies it is not an
-   * energy measure; operationalKilowattHours is.
+   * A legacy total (ADR 0024), not an energy measure: the electricity the
+   * usage is modelled to consume, plus its embodied emissions expressed as
+   * energy at the grid factor applied to the row. operationalKilowattHours
+   * is the energy.
    */
   kilowattHours: number
   /** Metric tons CO2e, operational and embodied together. */
@@ -43,8 +43,8 @@ export default interface FootprintEstimate {
 /**
  * Marks an estimate whose energy is all electricity consumed and whose
  * emissions are all operational: storage, networking, memory, and compute
- * with no embodied part (ADR 0024). An estimate that already says how it
- * splits is returned as it is, and so is one with no co2e value (an AWS
+ * with no embodied part (ADR 0024). An estimate that already has either
+ * field is returned as it is, and so is one with no co2e value (an AWS
  * instance type that cannot be sized), which has nothing to split.
  */
 export const asOperationalEstimate = <Estimate extends FootprintEstimate>(
@@ -144,9 +144,12 @@ export interface MutableServiceEstimate {
 
 /**
  * Adds a row's energy to the running averages that unknown usage is
- * estimated from. kilowattHours is the row's legacy total. When the row has
- * embodied emissions in that total, operationalKilowattHours is its energy
- * without them (ADR 0024); it defaults to the total.
+ * estimated from. kilowattHours is what the provider puts in the average:
+ * the row's legacy total on AWS and Azure, and the energy of the row's
+ * compute, storage or memory on Google Cloud, which leaves embodied
+ * emissions out. When it holds embodied emissions,
+ * operationalKilowattHours is the energy without them (ADR 0024); it
+ * defaults to kilowattHours.
  */
 export const accumulateKilowattHours = (
   kilowattHoursByServiceAndUsageUnit: KilowattHoursByServiceAndUsageUnit,
@@ -192,7 +195,7 @@ const newTotals = (
 ): KilowattHourTotals => ({
   [accumulateBy]: accumValue,
   kilowattHours: kilowattHours,
-  ...(operationalKilowattHours !== kilowattHours && {
+  ...(!Object.is(operationalKilowattHours, kilowattHours) && {
     operationalKilowattHours,
   }),
 })
@@ -209,7 +212,7 @@ const addToTotals = (
   // as all operational.
   if (
     totals.operationalKilowattHours !== undefined ||
-    operationalKilowattHours !== kilowattHours
+    !Object.is(operationalKilowattHours, kilowattHours)
   )
     totals.operationalKilowattHours =
       operationalKilowattHoursOf(totals) + operationalKilowattHours
@@ -332,21 +335,29 @@ export const appendOrAccumulateEstimatesByDay = (
       })
 
     if (estimateFoundWithSameRegionAndServiceAccountAndTags) {
+      // The merged row says how it splits only if every part does (ADR 0024).
+      const bothSplit =
+        hasEnergySplit(estimateFoundWithSameRegionAndServiceAccountAndTags) &&
+        hasEnergySplit(serviceEstimate)
+      // When the parts differ in provenance their intensities are blended.
+      // Weighting by the electricity of each part keeps the identity of
+      // ADR 0024 on the merged row; parts that do not say how they split
+      // are weighted by the legacy total, as before.
       const provenance = mergeProvenance(
         estimateFoundWithSameRegionAndServiceAccountAndTags.provenance,
-        estimateFoundWithSameRegionAndServiceAccountAndTags.kilowattHours,
+        bothSplit
+          ? estimateFoundWithSameRegionAndServiceAccountAndTags.operationalKilowattHours
+          : estimateFoundWithSameRegionAndServiceAccountAndTags.kilowattHours,
         serviceEstimate.provenance,
-        serviceEstimate.kilowattHours,
+        bothSplit
+          ? serviceEstimate.operationalKilowattHours
+          : serviceEstimate.kilowattHours,
       )
       if (provenance)
         estimateFoundWithSameRegionAndServiceAccountAndTags.provenance =
           provenance
 
-      // The merged row says how it splits only if every part does (ADR 0024).
-      if (
-        hasEnergySplit(estimateFoundWithSameRegionAndServiceAccountAndTags) &&
-        hasEnergySplit(serviceEstimate)
-      ) {
+      if (bothSplit) {
         estimateFoundWithSameRegionAndServiceAccountAndTags.operationalKilowattHours +=
           serviceEstimate.operationalKilowattHours
         estimateFoundWithSameRegionAndServiceAccountAndTags.embodiedCo2e +=
@@ -384,11 +395,15 @@ export const appendOrAccumulateEstimatesByDay = (
   }
 }
 
+interface EnergySplit {
+  operationalKilowattHours: number
+  embodiedCo2e: number
+}
+
 /** Whether an estimate carries both fields of ADR 0024. */
-const hasEnergySplit = (estimate: {
-  operationalKilowattHours?: number
-  embodiedCo2e?: number
-}): boolean =>
+const hasEnergySplit = <Estimate extends Partial<EnergySplit>>(
+  estimate: Estimate,
+): estimate is Estimate & EnergySplit =>
   estimate.operationalKilowattHours !== undefined &&
   estimate.embodiedCo2e !== undefined
 

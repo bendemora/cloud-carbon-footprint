@@ -30,6 +30,14 @@ export type {
   StaticFactorTable,
   StaticFactorTables,
 } from './sources/StaticSource'
+export {
+  NESO_HOLD_BACK_HOURS,
+  NESO_MIN_REQUEST_INTERVAL_MS,
+  NESO_SOURCE_ID,
+  NESO_ZONES,
+  NesoSource,
+} from './sources/NesoSource'
+export type { NesoSourceOptions } from './sources/NesoSource'
 export { missingPeriods, timeWeightedMean } from './coverage'
 export type { WeightedMean } from './coverage'
 export { InMemoryIntensityStore } from './stores/InMemoryIntensityStore'
@@ -62,6 +70,9 @@ export {
   MongoDbIntensityStore,
 } from './stores/MongoDbIntensityStore'
 export { createIntensityStore } from './stores/createIntensityStore'
+export { RECENT_READ_MS, RecentReadsStore } from './stores/RecentReadsStore'
+export { PartialFetchError, partialPointsOf } from './PartialFetchError'
+export { MAX_G_CO2E_PER_KWH } from './dataQuality'
 export type {
   CapabilityReporterInput,
   EmissionsFactorsResolution,

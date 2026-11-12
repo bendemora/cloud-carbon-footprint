@@ -110,7 +110,7 @@ fileignoreconfig:
 - filename: docker/nginx.conf
   checksum: a4632d785a11f199217d4229a40eba5a38180d9945d96799dc9b5efc6a3bc06e
 - filename: docs/design/2026-11-localised-time-resolved-carbon-estimation.md
-  checksum: f52d0f4d9c54ac9becf0ef476f8a517a682f3aa8126db8577c28b2f953da9fdf
+  checksum: 9399de5c314273d0e2c5e9e2a5cc5db697e6d2971113a5cb003cf01d890f9a09
 - filename: microsite/blog/2023-08-23-ccf-on-vm.md
   checksum: 84e94d40daf06c50f7b0e26d8d73a300d967279a87612e991e417530bfb8774c
 - filename: microsite/docs/ClassifyingUsageTypes.md
@@ -140,7 +140,7 @@ fileignoreconfig:
 - filename: packages/ali/src/lib/AliCalculateRow.ts
   checksum: 77997e1e88c3fe9bbafbda63d4c1c9b83df439417664cf0d080488b01c8c0c51
 - filename: packages/api/.env.template
-  checksum: d0f9ad34d34ebb5658732e1f30c5a67c74a6b3be9e8b50966e1174b06048ffcb
+  checksum: 59a9ce0c4f9348517015b56cb1b06a181ea7b9781e4b277e15481c3e3d201e43
 - filename: packages/api/CHANGELOG.md
   checksum: 70538ae254f51f772d64e42ddb9f2c6393fc49969ea0be0cc5c91a6447204032
 - filename: packages/api/create_docker_secrets.sh
@@ -226,7 +226,7 @@ fileignoreconfig:
 - filename: packages/azure/src/lib/ConsumptionManagement.ts
   checksum: 42fc6ed4df06fb61f5077f3192d8b8aa8162016621da79f369247fac612afbd6
 - filename: packages/cli/.env.template
-  checksum: b3c6639cf8f835a8167972673a84c032cc4555c116a069493462441d01a68da3
+  checksum: 6cc1ecc01507527e039118e7eea5aa73827c3564f2309a9cf1093ef50df8c58a
 - filename: packages/cli/CHANGELOG.md
   checksum: 21834ba3691c0d05ea8d60ccaae74695a0e7a1f73c762d2692a5e2e2bb7c5c93
 - filename: packages/cli/src/CreateLookupTable/createAzureInput.ts
@@ -381,9 +381,9 @@ fileignoreconfig:
   checksum: a64d71c2fc2e45bccba7b7bdb9bcac70825eb78882799e789c130b60cae4558e
 - filename: packages/create-app/templates/default-app/.yarn/releases/yarn-4.12.0.cjs
 - filename: packages/create-app/templates/default-app/packages/api/.env.template
-  checksum: 38967f82f86a66aa48eece7bcb79274e7fa11bad79afd9e144351102b0308958
+  checksum: 34b6a48674d45a6263711217c77307458227bd0c8d002081a90c9dfb8f69bb31
 - filename: packages/create-app/templates/default-app/packages/cli/.env.template
-  checksum: 22734f33b4b1aaad7356ec2771441356c7e8256d0b7e25e0d0aa74e10b23b064
+  checksum: ccf5f1064b6ebfef0109313a0752ab006d7744eb9b1381bd90792479ba11024c
 - filename: packages/create-app/templates/default-app/packages/cli/src/GuidedInstall/aws.ts
   checksum: 402853f10d9ee56006cea9b63d6ec8d34d6eed506addf89d048d3072069d9f7b
 - filename: packages/create-app/templates/default-app/packages/cli/src/GuidedInstall/azure.ts
@@ -507,7 +507,7 @@ fileignoreconfig:
 - filename: .adr/0026-grid_intensity_from_primary_publishers.md
   checksum: 5367290b507a0f461a5edea530d47911a154bda13fd8c1506c285af0572d7300
 - filename: docs/design/research/2026-11-primary-publishers.md
-  checksum: 3e2655c4d066ce8baa6feb26968e13ad86bdb10291cbbbceec0d15e19642125d
+  checksum: 2f697438b456975f8afc0011ecc19424aa8bfc73b32d33a9dc5f4c6ce74c3f3d
 scopeconfig:
 - scope: node
 version: "1.0"
