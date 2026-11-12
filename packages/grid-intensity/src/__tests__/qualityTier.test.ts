@@ -6,7 +6,7 @@
 import { deriveQualityTier } from '../qualityTier'
 
 describe('deriveQualityTier', () => {
-  const live = { sourceId: 'electricitymaps', isEstimated: false }
+  const live = { sourceId: 'neso', isEstimated: false }
 
   it('is D for the static source whatever the granularities', () => {
     expect(
@@ -59,7 +59,7 @@ describe('deriveQualityTier', () => {
   it('is C when a live source marks the values as estimated', () => {
     expect(
       deriveQualityTier({
-        sourceId: 'electricitymaps',
+        sourceId: 'neso',
         isEstimated: true,
         intensityGranularity: 'hour',
         usageGranularity: 'hour',

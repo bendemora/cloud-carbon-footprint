@@ -65,10 +65,14 @@ const mergeLicence = (a: LicenceId, b: LicenceId): LicenceId => {
  * identical provenance, which is kept as it is. When they differ, the
  * merged row takes the fields of the lower-tier row, except the licence,
  * which is the more restrictive of the two; it is marked estimated, and its
- * intensity is the energy-weighted mean of the two. kilowattHours includes
- * embodied emissions converted at each row's factor, so that mean is the
- * merged row's co2e (tonnes) x 1e6 divided by its kilowattHours, not an
- * operational-only intensity. When only one row has provenance, that one is kept, marked
+ * intensity is the mean of the two, weighted by the energy the caller gives
+ * for each row. appendOrAccumulateEstimatesByDay gives each row's
+ * electricity (operationalKilowattHours) when both rows carry it, so the
+ * mean is the intensity of the merged row's electricity and the identity
+ * of ADR 0024 holds on it. Otherwise it gives the legacy kilowattHours,
+ * and the mean is the merged row's co2e (tonnes) x 1e6 divided by its
+ * kilowattHours.
+ * When only one row has provenance, that one is kept, marked
  * estimated.
  */
 export const mergeProvenance = (

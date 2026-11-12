@@ -38,7 +38,7 @@ For the JSON file cache modes (local filesystem and Google Cloud Storage), CCF r
 
 Two limits remain:
 
-- The cache file holds one period (one day, by default) per line, and CCF reads and writes each line as one string. One period's estimates must therefore come to less than about 512 MiB of JSON. That is about 1.1 million service estimates with provenance, or about 2.3 million without, measured with a typical AWS row; rows with tags or longer names are larger. Past that, reading or writing the cache fails with an error like:
+- The cache file holds one period (one day, by default) per line, and CCF reads and writes each line as one string. One period's estimates must therefore come to less than about 512 MiB of JSON. That is about 950,000 service estimates as CCF writes them from billing data now, with provenance and the operational energy and embodied emissions fields. It was about 1.1 million with provenance alone and about 2.3 million with neither, measured with a typical AWS row. The two fields typically add 64 to 86 characters to a row, and the figure of 950,000 is computed from that, not measured on a cache. Rows with tags or longer names are larger. Past that, reading or writing the cache fails with an error like:
 
   `RangeError: Invalid string length`
 

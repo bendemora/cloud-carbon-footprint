@@ -30,6 +30,7 @@ import {
   accumulateKilowattHours,
   AccumulateKilowattHoursBy,
   appendOrAccumulateEstimatesByDay,
+  asOperationalEstimate,
   calculateGigabyteHours,
   CloudConstants,
   CloudConstantsEmissionsFactors,
@@ -86,7 +87,6 @@ import {
   AZURE_CLOUD_CONSTANTS,
   AZURE_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
 } from '../domain'
-import { AZURE_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES } from './AzureRegions'
 
 export default class ConsumptionManagementService {
   private readonly consumptionManagementLogger: Logger
@@ -147,7 +147,7 @@ export default class ConsumptionManagementService {
         appendOrAccumulateEstimatesByDay(
           results,
           consumptionDetailRow,
-          { ...footprintEstimate, provenance },
+          { ...asOperationalEstimate(footprintEstimate), provenance },
           grouping,
           [],
         )
@@ -168,7 +168,7 @@ export default class ConsumptionManagementService {
           appendOrAccumulateEstimatesByDay(
             results,
             rowData,
-            { ...footprintEstimate, provenance },
+            { ...asOperationalEstimate(footprintEstimate), provenance },
             grouping,
             [],
           )
@@ -256,18 +256,9 @@ export default class ConsumptionManagementService {
     region: string,
     period: Period,
   ): Promise<EmissionsFactorsResolution> {
-    return resolveEmissionsFactors(
-      'AZURE',
-      region,
-      period.start,
-      period.end,
-      { factors: AZURE_EMISSIONS_FACTORS_METRIC_TON_PER_KWH },
-      {
-        legacyElectricityMapsZones:
-          AZURE_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-        logger: this.consumptionManagementLogger,
-      },
-    )
+    return resolveEmissionsFactors('AZURE', region, period.start, period.end, {
+      factors: AZURE_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
+    })
   }
 
   private getFootprintEstimateFromUsageRow(
@@ -497,15 +488,16 @@ export default class ConsumptionManagementService {
         // if there exist any kilowatt hours from a memory footprint,
         // add the kwh and co2e for both compute and memory
         if (memoryFootprint.kilowattHours || embodiedEmissions.co2e) {
+          const operationalKilowattHours =
+            computeFootprint.kilowattHours + memoryFootprint.kilowattHours
           const kilowattHours =
-            computeFootprint.kilowattHours +
-            memoryFootprint.kilowattHours +
-            embodiedEmissions.kilowattHours
+            operationalKilowattHours + embodiedEmissions.kilowattHours
           accumulateKilowattHours(
             AZURE_CLOUD_CONSTANTS.KILOWATT_HOURS_BY_SERVICE_AND_USAGE_UNIT,
             consumptionDetailRow,
             kilowattHours,
             AccumulateKilowattHoursBy.USAGE_AMOUNT,
+            operationalKilowattHours,
           )
 
           return {
@@ -516,6 +508,8 @@ export default class ConsumptionManagementService {
               memoryFootprint.co2e +
               embodiedEmissions.co2e,
             usesAverageCPUConstant: computeFootprint.usesAverageCPUConstant,
+            operationalKilowattHours,
+            embodiedCo2e: embodiedEmissions.co2e,
           }
         }
 

@@ -9,7 +9,7 @@ A fork of [cloud-carbon-footprint/cloud-carbon-footprint](https://github.com/clo
 Read these before any non-trivial change:
 
 - `docs/design/2026-11-localised-time-resolved-carbon-estimation.md`: the approved design, the phase plan (section 12) and the verification backlog (section 14). Work in phase order; each phase lists its acceptance criteria. Section 12 ends with the current status and the agreed order of work, which is where to check what is done and what comes next.
-- `.adr/0022-grid_intensity_source_layer.md`: the headline decision. New architectural decisions get a new ADR in `.adr/` (numbered, same format).
+- `.adr/0022-grid_intensity_source_layer.md`: the headline decision, and `.adr/0026-grid_intensity_from_primary_publishers.md`: live grid intensity comes from primary publishers (system operators and public agencies) only, and Electricity Maps is not called or built in. New architectural decisions get a new ADR in `.adr/` (numbered, same format).
 - `microsite/docs/HowItWorks/Methodology.md`: the estimation model this fork keeps.
 
 ## Toolchain
@@ -53,10 +53,10 @@ Do not bypass the hook. If a commit must be split to keep the hook's run meaning
 
 ## Where things are
 
-- `packages/core`: estimators and the energy model constants types. `packages/common`: config (`Config.ts`, env vars via `getEnvVar`), result types, the legacy `EmissionsFactors.ts`. `packages/app`: `App.getCostAndEstimates`, cache decorator and managers. `packages/aws|gcp|azure|ali|on-premise`: provider usage sources and constants. `packages/api`: Express routes under `/api`. `packages/cli`: commands as `package.json` scripts. `packages/client`: Create React App UI. `packages/integration-tests`: TestCafe.
-- `packages/grid-intensity`: the grid intensity source layer (design section 6): interfaces, sources, the resolver, the stores and the `resolveEmissionsFactors` adapter that the provider packages call.
+- `packages/core`: estimators and the energy model constants types. `packages/common`: config (`Config.ts`, env vars via `getEnvVar`), result types. `packages/app`: `App.getCostAndEstimates`, cache decorator and managers. `packages/aws|gcp|azure|ali|on-premise`: provider usage sources and constants. `packages/api`: Express routes under `/api`. `packages/cli`: commands as `package.json` scripts. `packages/client`: Create React App UI. `packages/integration-tests`: TestCafe.
+- `packages/grid-intensity`: the grid intensity source layer (design section 6): interfaces, sources, the resolver, the stores, the grid zone registry (`src/registry/gridZones.ts`, which maps cloud regions to electricity grids) and the `resolveEmissionsFactors` adapter that the provider packages call.
 - Planned: `packages/provider-reports` (section 10).
-- Test fixtures live in each package's `src/__tests__/fixtures/`. External HTTP is never called in tests; mock `global.fetch` as `packages/common/src/__tests__/EmissionsFactors.test.ts` does, with recorded fixtures.
+- Test fixtures live in each package's `src/__tests__/fixtures/`. External HTTP is never called in tests; mock `global.fetch` and answer from recorded fixtures, such as the NESO ones in `packages/grid-intensity/src/__tests__/fixtures/neso/`.
 - The only tests that talk to a real service are the opt-in MongoDB live tests: `MongoDbIntensityStore.live.test.ts` in `packages/grid-intensity` and `MongoDbCacheManager.live.test.ts` in `packages/app`. They are skipped unless `MONGODB_LIVE_TESTS` holds the address of a throwaway MongoDB server, never run when `CI` is set, and use databases of their own. Run them after changing either class or the `mongodb` driver version; the header of each file has the commands.
 
 ## Data and secrets

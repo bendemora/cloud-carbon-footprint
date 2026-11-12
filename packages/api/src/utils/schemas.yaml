@@ -18,8 +18,16 @@ components:
                 enum: [aws, gcp, azure]
               kilowattHours:
                 type: number
+                description: A legacy total, not an energy measure. The electricity the usage is modelled to consume, plus the row's embodied emissions expressed as energy at the grid factor applied to it. With the static factors that addition is fixed for a region; with a live intensity it grows as the grid gets cleaner. operationalKilowattHours is the energy.
               co2e:
                 type: number
+                description: Metric tons CO2e, operational and embodied together
+              operationalKilowattHours:
+                type: number
+                description: Optional. The electricity the usage is modelled to consume, PUE and replication included, in kilowatt hours. Present, together with embodiedCo2e, on AWS, Google Cloud, Azure and Alibaba Cloud estimates computed from billing data. Absent on estimates from the cloud usage APIs (billing data turned off), on rows cached before it was recorded, and on a row with no co2e value.
+              embodiedCo2e:
+                type: number
+                description: Optional. Metric tons CO2e from hardware manufacturing attributed to the usage. Operational emissions are co2e less this. For a row with both fields and provenance, co2e is operationalKilowattHours times provenance.gCO2ePerKWh divided by 1,000,000, plus embodiedCo2e. An Alibaba Cloud row has no provenance, so the factor applied to it is not in the response. For AWS and Azure usage estimated from the average of known usage, this is the share inherited from the embodied emissions of the known rows, and it moves with the grid factors.
               cost:
                 type: number
               usesAverageCPUConstant?:
@@ -46,10 +54,10 @@ components:
                 properties:
                   sourceId:
                     type: string
-                    description: For example static or electricitymaps-v3
+                    description: The id of the grid intensity source, for example static
                   zoneId:
                     type: string
-                    description: The grid zone, not the cloud availability zone
+                    description: The source's zone for the region, not the cloud availability zone. The static source names it after the region (aws:eu-west-2, for example)
                   granularity:
                     type: string
                     enum: [hour, day, month, year]
@@ -69,7 +77,7 @@ components:
                     enum: [A, B, C, D]
                   gCO2ePerKWh:
                     type: number
-                    description: Grid intensity applied to the row, in gCO2e/kWh. kilowattHours includes embodied emissions converted at this factor, so for a row with a co2e value, co2e (tonnes) is kilowattHours times this value divided by 1,000,000.
+                    description: Grid intensity applied to the row, in gCO2e/kWh. kilowattHours includes embodied emissions converted at this factor, so for a row with a co2e value, co2e (tonnes) is kilowattHours times this value divided by 1,000,000. On a row merged from parts with different provenance (isEstimated is then true) it is the mean of the parts' intensities weighted by their operationalKilowattHours, and that relation with kilowattHours does not hold.
                   modelVersion:
                     type: string
                   calibrationVersion:
@@ -121,42 +129,27 @@ components:
           type: object
     GridIntensityCapabilitiesResponse:
       type: object
-      description: What each configured grid intensity source can deliver for each provider region. Tiers are for a day of usage, the finest usage period the estimates have.
+      description: The grid zone of each provider region, and what each configured grid intensity source can deliver for it. Tiers are for a day of usage, the finest usage period the estimates have.
       required: [generatedAt, regions]
       properties:
         generatedAt:
           type: string
           format: date-time
-        legacyElectricityMaps:
-          type: object
-          description: Present only while ELECTRICITY_MAPS_TOKEN is set and no Electricity Maps v4 source exists. The Electricity Maps v3 lookup is then applied before the sources, for every region that has an Electricity Maps zone. The report does not call Electricity Maps.
-          required: [sourceId, qualityTier, message]
-          properties:
-            sourceId:
-              type: string
-              description: The source id on the provenance of the estimates it serves (electricitymaps-v3)
-            qualityTier:
-              type: string
-              enum: [A, B, C, D]
-              description: The tier of the estimates it serves
-            message:
-              type: string
-              description: The state in plain words
         regions:
           type: array
           items:
             type: object
-            required: [provider, region, sources]
+            required: [provider, region, gridZoneId, sources]
             properties:
               provider:
                 type: string
                 enum: [AWS, GCP, AZURE]
               region:
                 type: string
-              legacyElectricityMapsZoneId:
+              gridZoneId:
                 type: string
                 nullable: true
-                description: Present only with legacyElectricityMaps. The Electricity Maps zone the v3 lookup uses for the region, or null when it has none and the region is left to the sources.
+                description: The electricity grid the region is on, from the grid zone registry (GB or US-MIDA-PJM, for example), or null when the registry has no zone for the region
               sources:
                 type: array
                 description: One entry per configured source, in GRID_INTENSITY_SOURCES order
@@ -169,7 +162,7 @@ components:
                     zoneId:
                       type: string
                       nullable: true
-                      description: The source's grid zone for the region, or null when it has none
+                      description: The source's own zone for the region, or null when it has none
                     licenceState:
                       type: string
                       enum: [open, acknowledged, needs-acknowledgement, unavailable]

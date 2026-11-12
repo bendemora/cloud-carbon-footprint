@@ -51,8 +51,6 @@ export default class App {
     const config = configLoader()
     includeCloudProviders(cloudProviderToSeed, config)
     const { AWS, GCP, AZURE, ALI } = config
-    if (configLoader().ELECTRICITY_MAPS_TOKEN)
-      appLogger.info('Using Electricity Maps')
     if (process.env.TEST_MODE) {
       return []
     }
@@ -172,8 +170,9 @@ export default class App {
   }
 
   /**
-   * What each configured grid intensity source can deliver for each provider
-   * region: the doctor command and GET /api/grid-intensity/capabilities.
+   * The grid zone of each provider region and what each configured grid
+   * intensity source can deliver for it: the doctor command and
+   * GET /api/grid-intensity/capabilities.
    */
   getGridIntensityCapabilities(): Promise<CapabilityReport> {
     return getGridIntensityCapabilities()

@@ -10,7 +10,6 @@ import {
   RecommendationResult,
   configLoader,
 } from '@cloud-carbon-footprint/common'
-import { ElectricityMapsRequestError } from '@cloud-carbon-footprint/grid-intensity'
 
 import AzureAccount from '../application/AzureAccount'
 import AzureCredentialsProvider from '../application/AzureCredentialsProvider'
@@ -179,7 +178,7 @@ describe('Azure Account', () => {
         ])
       })
 
-      it('still skips that subscription, with a warning, for other errors', async () => {
+      it('leaves that subscription out, with a warning, and returns the others', async () => {
         const warn = jest.spyOn(Logger.prototype, 'warn')
         ;(getEstimatesSpy as jest.Mock)
           .mockRejectedValueOnce(new Error('AuthorizationFailed'))
@@ -197,26 +196,6 @@ describe('Azure Account', () => {
           'Unable to get estimate data for Azure subscription sub-1: AuthorizationFailed',
         )
         warn.mockRestore()
-      })
-
-      it('stops instead of skipping it when an Electricity Maps request failed, so the estimates cache keeps nothing partial', async () => {
-        ;(getEstimatesSpy as jest.Mock)
-          .mockRejectedValueOnce(
-            new ElectricityMapsRequestError(
-              'Failed to get data from Electricity Maps. Reason: timeout.',
-            ),
-          )
-          .mockResolvedValueOnce(subscriptionEstimates())
-        const azureAccount = new AzureAccount()
-        await azureAccount.initializeAccount()
-        await expect(
-          azureAccount.getDataFromConsumptionManagement(
-            startDate,
-            endDate,
-            grouping,
-            [],
-          ),
-        ).rejects.toThrow('Failed to get data from Electricity Maps.')
       })
     })
 
