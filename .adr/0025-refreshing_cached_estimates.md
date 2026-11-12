@@ -4,7 +4,7 @@ Date: 2026-11-10
 
 ## Status
 
-Accepted. Design section 12 put the marker before the first live source, and the project owner asked on 2026-11-12 for that plan to be carried out. The marker (point 1 of the decision) is built in the pull request that changed this status. Replace and refresh (points 2 and 3) are not built yet. The implementation notes at the end record what was built.
+Accepted with the merge of pull request #32, which builds the marker (point 1 of the decision). Design section 12 put the marker before the first live source. Replace and refresh (points 2 and 3) are not built yet. The implementation notes at the end record what was built.
 
 ## Decision
 
