@@ -110,7 +110,7 @@ fileignoreconfig:
 - filename: docker/nginx.conf
   checksum: a4632d785a11f199217d4229a40eba5a38180d9945d96799dc9b5efc6a3bc06e
 - filename: docs/design/2026-11-localised-time-resolved-carbon-estimation.md
-  checksum: f52d0f4d9c54ac9becf0ef476f8a517a682f3aa8126db8577c28b2f953da9fdf
+  checksum: 19715a359aaa627b4a1c2db58310ed12afbd02e106ccf1f508130354244fc981
 - filename: microsite/blog/2023-08-23-ccf-on-vm.md
   checksum: 84e94d40daf06c50f7b0e26d8d73a300d967279a87612e991e417530bfb8774c
 - filename: microsite/docs/ClassifyingUsageTypes.md
@@ -507,7 +507,7 @@ fileignoreconfig:
 - filename: .adr/0026-grid_intensity_from_primary_publishers.md
   checksum: 5367290b507a0f461a5edea530d47911a154bda13fd8c1506c285af0572d7300
 - filename: docs/design/research/2026-11-primary-publishers.md
-  checksum: 3e2655c4d066ce8baa6feb26968e13ad86bdb10291cbbbceec0d15e19642125d
+  checksum: 2f697438b456975f8afc0011ecc19424aa8bfc73b32d33a9dc5f4c6ce74c3f3d
 scopeconfig:
 - scope: node
 version: "1.0"
