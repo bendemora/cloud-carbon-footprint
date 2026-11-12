@@ -17,7 +17,7 @@ export type Granularity = 'hour' | 'day' | 'month' | 'year'
  * Accounting basis of an intensity value.
  * - location-consumption: average intensity of what a zone consumes, imports traced (flow-traced).
  * - location-production: average intensity of what a zone generates, imports not traced.
- * - marginal: intensity of the next unit of demand (for example WattTime MOER).
+ * - marginal: intensity of the next unit of demand.
  */
 export type IntensityBasis =
   | 'location-consumption'
