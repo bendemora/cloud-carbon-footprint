@@ -45,6 +45,8 @@ describe('UnknownEstimator', () => {
           timestamp: new Date('2021-01-01T00:00:00.000Z'),
           kilowattHours: 400,
           usesAverageCPUConstant: false,
+          operationalKilowattHours: 400,
+          embodiedCo2e: 0,
         },
       ])
     })
@@ -87,6 +89,8 @@ describe('UnknownEstimator', () => {
           timestamp: new Date('2021-01-01T00:00:00.000Z'),
           kilowattHours: 440,
           usesAverageCPUConstant: false,
+          operationalKilowattHours: 440,
+          embodiedCo2e: 0,
         },
       ])
     })
@@ -133,8 +137,124 @@ describe('UnknownEstimator', () => {
           timestamp: new Date('2021-01-01T00:00:00.000Z'),
           kilowattHours: 0,
           usesAverageCPUConstant: false,
+          operationalKilowattHours: 0,
+          embodiedCo2e: 0,
         },
       ])
+    })
+  })
+
+  describe('operational energy and embodied emissions (ADR 0024)', () => {
+    const region = 'us-east-1'
+    const factors = { [region]: 0.0004 }
+    const usage = [
+      {
+        timestamp: new Date('2021-01-01'),
+        cost: 1000,
+        usageUnit: 'testUsageUnit',
+        service: 'testService',
+      },
+    ]
+    const estimateWith = (totals: {
+      cost: number
+      kilowattHours: number
+      operationalKilowattHours?: number
+    }) =>
+      new UnknownEstimator(EstimateUnknownUsageBy.COST).estimate(
+        usage,
+        region,
+        factors,
+        {
+          kilowattHoursByServiceAndUsageUnit: {
+            testService: { testUsageUnit: totals },
+          },
+        },
+      )[0]
+
+    it('takes operational energy from the operational average and counts the rest of the emissions as embodied', () => {
+      // Known usage: 50 of cost for 20 kWh in the legacy total, 15 kWh of it electricity.
+      const estimate = estimateWith({
+        cost: 50,
+        kilowattHours: 20,
+        operationalKilowattHours: 15,
+      })
+      expect(estimate.kilowattHours).toBe(400)
+      expect(estimate.co2e).toBeCloseTo(0.16, 12)
+      expect(estimate.operationalKilowattHours).toBe(300)
+      expect(estimate.embodiedCo2e).toBeCloseTo(0.04, 12)
+      expect(
+        estimate.operationalKilowattHours * factors[region] +
+          estimate.embodiedCo2e,
+      ).toBeCloseTo(estimate.co2e, 12)
+    })
+
+    it('reads totals without an operational sum as all operational', () => {
+      const estimate = estimateWith({ cost: 50, kilowattHours: 20 })
+      expect(estimate.operationalKilowattHours).toBe(400)
+      expect(estimate.embodiedCo2e).toBe(0)
+    })
+
+    it('has no embodied emissions at an intensity of 0, where the legacy estimate of unknown usage has no emissions at all', () => {
+      const estimate = new UnknownEstimator(
+        EstimateUnknownUsageBy.COST,
+      ).estimate(
+        usage,
+        region,
+        { [region]: 0, Unknown: 0 },
+        {
+          kilowattHoursByServiceAndUsageUnit: {
+            testService: {
+              testUsageUnit: {
+                cost: 50,
+                kilowattHours: 20,
+                operationalKilowattHours: 15,
+              },
+            },
+          },
+        },
+      )[0]
+      expect(estimate.co2e).toBe(0)
+      expect(estimate.operationalKilowattHours).toBe(300)
+      expect(estimate.embodiedCo2e).toBe(0)
+    })
+
+    it('uses the Unknown factor for both parts when the region has none', () => {
+      const estimate = new UnknownEstimator(
+        EstimateUnknownUsageBy.COST,
+      ).estimate(
+        usage,
+        'no-such-region',
+        { Unknown: 0.0002 },
+        {
+          kilowattHoursByServiceAndUsageUnit: {
+            testService: {
+              testUsageUnit: {
+                cost: 50,
+                kilowattHours: 20,
+                operationalKilowattHours: 15,
+              },
+            },
+          },
+        },
+      )[0]
+      // 400 kWh in the legacy total and 300 of electricity, at 200 g.
+      expect(estimate.co2e).toBeCloseTo(0.08, 12)
+      expect(estimate.operationalKilowattHours).toBe(300)
+      expect(estimate.embodiedCo2e).toBeCloseTo(0.02, 12)
+    })
+
+    it('gives neither field when the estimate has no co2e value', () => {
+      // Known usage with no cost: the average per unit of cost is not a
+      // finite number, and neither is the estimate.
+      const notANumber = estimateWith({ cost: 0, kilowattHours: 0 })
+      expect(notANumber.co2e).toBeNaN()
+      expect(notANumber).not.toHaveProperty('operationalKilowattHours')
+      expect(notANumber).not.toHaveProperty('embodiedCo2e')
+
+      const unbounded = estimateWith({ cost: 0, kilowattHours: 20 })
+      expect(unbounded.co2e).toBe(Infinity)
+      expect(unbounded).not.toHaveProperty('operationalKilowattHours')
+      expect(unbounded).not.toHaveProperty('embodiedCo2e')
     })
   })
 })

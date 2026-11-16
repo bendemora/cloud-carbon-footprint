@@ -41,10 +41,7 @@ import {
   UnknownRecommendationDetails,
 } from './RecommendationsTypes'
 import ServiceWrapper from './ServiceWrapper'
-import {
-  GCP_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-  GCP_REGIONS,
-} from './GCPRegions'
+import { GCP_REGIONS } from './GCPRegions'
 
 export default class Recommendations implements ICloudRecommendationsService {
   readonly RECOMMENDER_IDS: string[] = [
@@ -192,7 +189,7 @@ export default class Recommendations implements ICloudRecommendationsService {
       }
     const region = this.parseRegionFromZone(zone)
     const emissionsFactors: CloudConstantsEmissionsFactors =
-      await this.getEmissionsFactors(region, this.recommendationsLogger)
+      await this.getEmissionsFactors(region)
     const kilowattHoursPerCost =
       this.costAndCo2eTotals.kilowattHours / this.costAndCo2eTotals.cost
     const kilowattHours = cost * kilowattHoursPerCost
@@ -465,7 +462,7 @@ export default class Recommendations implements ICloudRecommendationsService {
     }
 
     const emissionsFactors: CloudConstantsEmissionsFactors =
-      await this.getEmissionsFactors(region, this.recommendationsLogger)
+      await this.getEmissionsFactors(region)
 
     return this.computeEstimator.estimate(
       [computeUsage],
@@ -488,7 +485,7 @@ export default class Recommendations implements ICloudRecommendationsService {
     }
 
     const emissionsFactors: CloudConstantsEmissionsFactors =
-      await this.getEmissionsFactors(region, this.recommendationsLogger)
+      await this.getEmissionsFactors(region)
 
     const storageEstimator =
       storageType === 'SSD'
@@ -530,7 +527,6 @@ export default class Recommendations implements ICloudRecommendationsService {
 
   private async getEmissionsFactors(
     region: string,
-    logger: Logger,
   ): Promise<CloudConstantsEmissionsFactors> {
     const period = lastFullUtcDay()
     const { factors } = await resolveEmissionsFactors(
@@ -539,11 +535,6 @@ export default class Recommendations implements ICloudRecommendationsService {
       period.start,
       period.end,
       { factors: getGCPEmissionsFactors },
-      {
-        legacyElectricityMapsZones:
-          GCP_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-        logger,
-      },
     )
     return factors
   }

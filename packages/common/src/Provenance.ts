@@ -17,7 +17,7 @@ export type Granularity = 'hour' | 'day' | 'month' | 'year'
  * Accounting basis of an intensity value.
  * - location-consumption: average intensity of what a zone consumes, imports traced (flow-traced).
  * - location-production: average intensity of what a zone generates, imports not traced.
- * - marginal: intensity of the next unit of demand (for example WattTime MOER).
+ * - marginal: intensity of the next unit of demand.
  */
 export type IntensityBasis =
   | 'location-consumption'
@@ -40,7 +40,7 @@ export type QualityTier = 'A' | 'B' | 'C' | 'D'
 
 export interface Provenance {
   sourceId: string
-  /** The grid zone the intensity came from, not the cloud availability zone. */
+  /** The source's zone that the intensity came from, not the cloud availability zone. */
   zoneId: string
   granularity: Granularity
   basis: IntensityBasis
@@ -52,9 +52,14 @@ export interface Provenance {
    * The grid intensity applied to the row, gCO2e/kWh. The row's
    * kilowattHours includes embodied emissions converted to energy at this
    * same factor, so for a row with a co2e value, co2e (tonnes) is
-   * kilowattHours x gCO2ePerKWh / 1e6; it is not an intensity of operational
-   * energy alone. The exception is a factor of 0: embodied emissions are
-   * then in co2e but not in kilowattHours.
+   * kilowattHours x gCO2ePerKWh / 1e6. Two exceptions. At a factor of 0,
+   * embodied emissions are in co2e but not in kilowattHours. On a row
+   * merged from parts with different provenance (isEstimated is then true)
+   * this is the mean of the parts' intensities weighted by their
+   * operationalKilowattHours, so it is the intensity of the row's
+   * electricity and co2e = operationalKilowattHours x gCO2ePerKWh / 1e6 +
+   * embodiedCo2e (ADR 0024); when the parts do not carry those fields it is
+   * weighted by their kilowattHours.
    */
   gCO2ePerKWh: number
   /** CCF energy model version (section 9). */

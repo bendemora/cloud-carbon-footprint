@@ -11,6 +11,7 @@ import {
   Logger,
   LookupTableInput,
   LookupTableOutput,
+  ServiceData,
 } from '@cloud-carbon-footprint/common'
 import {
   ComputeEstimator,
@@ -52,7 +53,6 @@ import {
   AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
 } from '../domain'
 import { tonnesToGrams } from '@cloud-carbon-footprint/grid-intensity'
-import { AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES } from '../lib/AWSRegions'
 import {} from '../lib/CostAndUsageTypes'
 import { CloudWatchClient } from '@aws-sdk/client-cloudwatch'
 import { GlueClient } from '@aws-sdk/client-glue'
@@ -104,19 +104,46 @@ jest.mock('@cloud-carbon-footprint/grid-intensity', () => {
 })
 
 /**
- * The results without provenance, for comparing with expectations written
- * before provenance existed. Fails if any service estimate lacks it, so
- * stripping cannot hide a missing field.
+ * ADR 0024: a row with a co2e value says how much of its energy is
+ * electricity and how much of its emissions is embodied, and its co2e is the
+ * electricity at the row's grid intensity plus the embodied emissions. A row
+ * with no co2e value (an instance type that cannot be sized) says neither.
+ */
+const expectEnergySplit = (estimate: ServiceData) => {
+  const { operationalKilowattHours, embodiedCo2e, co2e, provenance } = estimate
+  if (!Number.isFinite(co2e)) {
+    expect({ operationalKilowattHours, embodiedCo2e }).toEqual({})
+    return
+  }
+  expect(operationalKilowattHours).toBeGreaterThanOrEqual(0)
+  expect(embodiedCo2e).toBeGreaterThanOrEqual(-1e-15)
+  const rebuilt =
+    (operationalKilowattHours * provenance.gCO2ePerKWh) / 1e6 + embodiedCo2e
+  expect(Math.abs(rebuilt - co2e)).toBeLessThanOrEqual(
+    1e-9 * Math.abs(co2e) + 1e-18,
+  )
+}
+
+/**
+ * The results without provenance and without the two fields of ADR 0024,
+ * for comparing with expectations written before those existed. Fails if any
+ * service estimate lacks provenance, or does not split as ADR 0024 says, so
+ * stripping cannot hide a missing or wrong field.
  */
 const withoutProvenance = (results: EstimationResult[]) =>
   results.map((result) => ({
     ...result,
-    serviceEstimates: result.serviceEstimates.map(
-      ({ provenance, ...estimate }) => {
-        expect(provenance?.qualityTier).toEqual(expect.any(String))
-        return estimate
-      },
-    ),
+    serviceEstimates: result.serviceEstimates.map((serviceEstimate) => {
+      const {
+        provenance,
+        operationalKilowattHours: _operationalKilowattHours,
+        embodiedCo2e: _embodiedCo2e,
+        ...estimate
+      } = serviceEstimate
+      expect(provenance?.qualityTier).toEqual(expect.any(String))
+      expectEnergySplit(serviceEstimate)
+      return estimate
+    }),
   }))
 
 jest.mock('@cloud-carbon-footprint/common', () => ({
@@ -382,21 +409,16 @@ describe('CostAndUsageReports Service', () => {
     ).getEstimates(startDate, endDate, grouping)
 
     expect(mockResolveCalls.length).toBeGreaterThan(0)
-    for (const [
-      provider,
-      region,
-      start,
-      end,
-      table,
-      options,
-    ] of mockResolveCalls as [
-      string,
-      string,
-      Date,
-      Date,
-      unknown,
-      { legacyElectricityMapsZones: unknown },
-    ][]) {
+    for (const call of mockResolveCalls) {
+      // provider, region, period start, period end and the static table
+      expect(call).toHaveLength(5)
+      const [provider, region, start, end, table] = call as [
+        string,
+        string,
+        Date,
+        Date,
+        unknown,
+      ]
       expect(provider).toBe('AWS')
       expect(region).toEqual(expect.any(String))
       // a day grouping: one whole UTC day, exclusive end
@@ -405,9 +427,6 @@ describe('CostAndUsageReports Service', () => {
       expect(table).toEqual({
         factors: AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
       })
-      expect(options.legacyElectricityMapsZones).toBe(
-        AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-      )
     }
   })
 
@@ -460,7 +479,7 @@ describe('CostAndUsageReports Service', () => {
     it('applies the resolved intensity and its provenance to unknown-usage rows as well', async () => {
       const liveTonnesPerKWh = 0.0001
       const liveProvenance = {
-        sourceId: 'electricitymaps-v3',
+        sourceId: 'live-source',
         zoneId: 'US-TEST',
         granularity: 'hour',
         basis: 'location-consumption',
@@ -484,6 +503,241 @@ describe('CostAndUsageReports Service', () => {
           15,
         )
       }
+    })
+  })
+
+  describe('operational energy and embodied emissions (ADR 0024)', () => {
+    const liveProvenance = (gCO2ePerKWh: number) => ({
+      sourceId: 'live-source',
+      zoneId: 'US-TEST',
+      granularity: 'hour',
+      basis: 'location-consumption',
+      factorType: 'lifecycle',
+      isEstimated: false,
+      licenceId: 'public-domain',
+      qualityTier: 'B',
+      gCO2ePerKWh,
+      modelVersion: 'unversioned',
+    })
+
+    /** Every service estimate of a fresh run over the fixture. */
+    const estimatesFor = async (fixture: GetQueryResultsCommandOutput) => {
+      AWS_CLOUD_CONSTANTS.KILOWATT_HOURS_BY_SERVICE_AND_USAGE_UNIT = {
+        total: {},
+      }
+      mockStartQueryExecution(startQueryExecutionResponse)
+      mockGetQueryExecution(getQueryExecutionResponse)
+      mockGetQueryResults(fixture)
+      const results = await new CostAndUsageReports(
+        new ComputeEstimator(),
+        new StorageEstimator(AWS_CLOUD_CONSTANTS.SSDCOEFFICIENT),
+        new StorageEstimator(AWS_CLOUD_CONSTANTS.HDDCOEFFICIENT),
+        new NetworkingEstimator(AWS_CLOUD_CONSTANTS.NETWORKING_COEFFICIENT),
+        new MemoryEstimator(AWS_CLOUD_CONSTANTS.MEMORY_COEFFICIENT),
+        new UnknownEstimator(AWS_CLOUD_CONSTANTS.ESTIMATE_UNKNOWN_USAGE_BY),
+        new EmbodiedEmissionsEstimator(
+          AWS_CLOUD_CONSTANTS.SERVER_EXPECTED_LIFESPAN,
+        ),
+        getServiceWrapper(),
+      ).getEstimates(startDate, endDate, grouping)
+      return results.flatMap((result) => result.serviceEstimates)
+    }
+
+    afterEach(() => {
+      mockResolveOverride = undefined
+    })
+
+    it('separates the embodied emissions of compute rows from their electricity, and gives other rows none', async () => {
+      const estimates = await estimatesFor(
+        athenaMockGetQueryResultsWithEC2ElasticMapWithEmbodiedEmissions,
+      )
+      estimates.forEach(expectEnergySplit)
+      const withEmbodied = estimates.filter(
+        (estimate) => estimate.embodiedCo2e > 0,
+      )
+      expect(withEmbodied.length).toBeGreaterThan(0)
+      for (const estimate of withEmbodied)
+        expect(estimate.operationalKilowattHours).toBeLessThan(
+          estimate.kilowattHours,
+        )
+
+      const withoutCompute = await estimatesFor(
+        athenaMockGetQueryResultsWithS3CloudWatchRDS,
+      )
+      withoutCompute.forEach(expectEnergySplit)
+      const storageOnly = withoutCompute.filter(
+        (estimate) => estimate.serviceName === 'AmazonS3',
+      )
+      expect(storageOnly.length).toBeGreaterThan(0)
+      for (const estimate of storageOnly) {
+        expect(estimate.embodiedCo2e).toBe(0)
+        expect(estimate.operationalKilowattHours).toBe(estimate.kilowattHours)
+      }
+    })
+
+    it.each([
+      ['with embodied emissions', 'embodied'],
+      ['with unknown usage', 'unknown'],
+    ])(
+      'reports the same electricity and embodied emissions at 400 and at 50 gCO2e/kWh when every row is resolved at the same intensity, for usage %s',
+      async (_name, fixtureName) => {
+        const fixture =
+          fixtureName === 'embodied'
+            ? athenaMockGetQueryResultsWithEC2ElasticMapWithEmbodiedEmissions
+            : athenaMockGetQueryResultsWithECSEksKafkaAndUnknownServices
+        mockResolveOverride = {
+          factors: { Unknown: 0.0004 },
+          provenance: liveProvenance(400),
+        }
+        const dirtyGrid = await estimatesFor(fixture)
+        mockResolveOverride = {
+          factors: { Unknown: 0.00005 },
+          provenance: liveProvenance(50),
+        }
+        const cleanGrid = await estimatesFor(fixture)
+
+        expect(cleanGrid.length).toBe(dirtyGrid.length)
+        expect(cleanGrid.length).toBeGreaterThan(0)
+        cleanGrid.forEach((clean, index) => {
+          const dirty = dirtyGrid[index]
+          expectEnergySplit(clean)
+          expectEnergySplit(dirty)
+          expect(clean.operationalKilowattHours).toBeCloseTo(
+            dirty.operationalKilowattHours,
+            9,
+          )
+          expect(clean.embodiedCo2e).toBeCloseTo(dirty.embodiedCo2e, 12)
+          // The legacy total grows on the cleaner grid wherever there are
+          // embodied emissions: they become more kilowatt hours.
+          if (clean.embodiedCo2e > 1e-12)
+            expect(clean.kilowattHours).toBeGreaterThan(dirty.kilowattHours)
+        })
+      },
+    )
+
+    it('holds at an intensity of 0, where co2e is the embodied emissions alone', async () => {
+      mockResolveOverride = {
+        factors: { Unknown: 0 },
+        provenance: liveProvenance(0),
+      }
+      const estimates = await estimatesFor(
+        athenaMockGetQueryResultsWithEC2ElasticMapWithEmbodiedEmissions,
+      )
+      estimates.forEach(expectEnergySplit)
+      expect(estimates.some((estimate) => estimate.embodiedCo2e > 0)).toBe(true)
+      for (const estimate of estimates) {
+        expect(estimate.co2e).toBe(estimate.embodiedCo2e)
+        expect(estimate.operationalKilowattHours).toBe(estimate.kilowattHours)
+      }
+    })
+
+    it('keeps the memory energy of a compute row with no embodied figure at an intensity of 0', async () => {
+      // The Redshift node of this fixture has a memory estimate and no
+      // embodied one. Its memory emissions are 0 on a grid at 0, and its
+      // memory energy must still be counted.
+      const fixture =
+        athenaMockGetQueryResultsWithRedshiftStorageComputeSavingsPlan
+      mockResolveOverride = {
+        factors: { Unknown: 0.0004 },
+        provenance: liveProvenance(400),
+      }
+      const dirtyGrid = await estimatesFor(fixture)
+      mockResolveOverride = {
+        factors: { Unknown: 0 },
+        provenance: liveProvenance(0),
+      }
+      const zeroGrid = await estimatesFor(fixture)
+
+      expect(zeroGrid.length).toBe(dirtyGrid.length)
+      expect(zeroGrid.length).toBeGreaterThan(0)
+      zeroGrid.forEach((zero, index) => {
+        const dirty = dirtyGrid[index]
+        expectEnergySplit(zero)
+        expect(zero.serviceName).toBe(dirty.serviceName)
+        expect(zero.operationalKilowattHours).toBeCloseTo(
+          dirty.operationalKilowattHours,
+          12,
+        )
+      })
+      expect(
+        dirtyGrid.some(
+          (estimate) =>
+            estimate.serviceName === 'AmazonRedshift' &&
+            estimate.embodiedCo2e === 0 &&
+            estimate.operationalKilowattHours > 0,
+        ),
+      ).toBe(true)
+    })
+
+    describe('a row with no co2e value', () => {
+      const athenaRow = (
+        usageType: string,
+        vCpus: string,
+        usageAmount: string,
+        cost: string,
+      ) => ({
+        Data: [
+          '2020-10-30',
+          testAccountId,
+          'us-west-1',
+          'AmazonEC2',
+          usageType,
+          'Hrs',
+          vCpus,
+          usageAmount,
+          cost,
+          '',
+          '',
+        ].map((VarCharValue) => ({ VarCharValue })),
+      })
+      const headers = {
+        Data: [
+          'timestamp',
+          'accountName',
+          'region',
+          'serviceName',
+          'usageType',
+          'usageUnit',
+          'vCpus',
+          'usageAmount',
+          'cost',
+          'resource_tags_user_environment',
+          'resource_tags_aws_created_by',
+        ].map((VarCharValue) => ({ VarCharValue })),
+      }
+      const fixtureOf = (
+        ...rows: ReturnType<typeof athenaRow>[]
+      ): GetQueryResultsCommandOutput => ({
+        $metadata: {},
+        ResultSet: { Rows: [headers, ...rows] },
+      })
+      // An instance type CCF does not know, with no vCPU count in the row.
+      const unsizable = athenaRow('USW1-BoxUsage:zz9.huge', '', '24', '7')
+      const sized = athenaRow('USW1-BoxUsage:m5.xlarge', '4', '24', '5')
+
+      it('has neither field', async () => {
+        const [estimate] = await estimatesFor(fixtureOf(unsizable))
+        expect(estimate.co2e).toBeNaN()
+        expect(estimate).not.toHaveProperty('operationalKilowattHours')
+        expect(estimate).not.toHaveProperty('embodiedCo2e')
+      })
+
+      it('takes the fields off the service estimate it is merged into, in either order', async () => {
+        for (const rows of [
+          [unsizable, sized],
+          [sized, unsizable],
+        ]) {
+          const estimates = await estimatesFor(fixtureOf(...rows))
+          expect(estimates).toHaveLength(1)
+          expect(estimates[0].co2e).toBeNaN()
+          expect(estimates[0]).not.toHaveProperty('operationalKilowattHours')
+          expect(estimates[0]).not.toHaveProperty('embodiedCo2e')
+        }
+        // The sized row on its own has both.
+        const [alone] = await estimatesFor(fixtureOf(sized))
+        expectEnergySplit(alone)
+        expect(alone.operationalKilowattHours).toBeGreaterThan(0)
+      })
     })
   })
 

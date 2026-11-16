@@ -50,7 +50,7 @@ const hourlyPoints = (
     basis: 'location-consumption',
     factorType: 'lifecycle',
     isEstimated: hour % 7 === 0,
-    sourceId: 'electricitymaps',
+    sourceId: 'entsoe',
     retrievedAt: utc('2026-11-01T00:00:00.000Z'),
     ...overrides,
   }))
@@ -105,7 +105,7 @@ describeLive('MongoDbIntensityStore against a real MongoDB server', () => {
   const stored = () => admin.db(DATABASE).collection(MONGODB_COLLECTION)
   const twoDays = (from: MongoDbIntensityStore = store) =>
     from.get(
-      'electricitymaps',
+      'entsoe',
       'GB',
       new Date(START),
       new Date(START + 48 * HOUR_MS),
@@ -148,7 +148,7 @@ describeLive('MongoDbIntensityStore against a real MongoDB server', () => {
     await store.put(hourlyPoints(48))
 
     const points = await store.get(
-      'electricitymaps',
+      'entsoe',
       'GB',
       new Date(START + 2.5 * HOUR_MS),
       new Date(START + 5 * HOUR_MS),
@@ -220,14 +220,12 @@ describeLive('MongoDbIntensityStore against a real MongoDB server', () => {
 
     // Retrieved at the cut-off is not before it.
     await expect(
-      store.purge('electricitymaps', utc('2026-11-01T00:00:00.000Z')),
+      store.purge('entsoe', utc('2026-11-01T00:00:00.000Z')),
     ).resolves.toBe(0)
     await expect(
-      store.purge('electricitymaps', utc('2026-11-02T00:00:00.000Z')),
+      store.purge('entsoe', utc('2026-11-02T00:00:00.000Z')),
     ).resolves.toBe(24)
-    expect(await stored().countDocuments({ sourceId: 'electricitymaps' })).toBe(
-      24,
-    )
+    expect(await stored().countDocuments({ sourceId: 'entsoe' })).toBe(24)
     expect(await stored().countDocuments({ sourceId: 'neso' })).toBe(24)
   })
 

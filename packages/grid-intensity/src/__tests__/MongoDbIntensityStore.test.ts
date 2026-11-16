@@ -26,7 +26,7 @@ const point = (overrides: Partial<IntensityPoint> = {}): IntensityPoint => ({
   basis: 'location-consumption',
   factorType: 'lifecycle',
   isEstimated: false,
-  sourceId: 'electricitymaps',
+  sourceId: 'entsoe',
   retrievedAt: utc('2026-11-01T00:00:00.000Z'),
   ...overrides,
 })
@@ -59,7 +59,7 @@ describe('MongoDbIntensityStore', () => {
     const stored = point()
     const { client, db, collection, sort } = fakeClient([stored])
     const points = await storeWith(client).get(
-      'electricitymaps',
+      'entsoe',
       'GB',
       utc('2026-01-01T00:00:00.000Z'),
       utc('2026-01-02T00:00:00.000Z'),
@@ -69,7 +69,7 @@ describe('MongoDbIntensityStore', () => {
     expect(db.collection).toHaveBeenCalledWith(MONGODB_COLLECTION)
     expect(collection.find).toHaveBeenCalledWith(
       {
-        sourceId: 'electricitymaps',
+        sourceId: 'entsoe',
         zoneId: 'GB',
         granularity: 'hour',
         periodStart: { $lt: utc('2026-01-02T00:00:00.000Z') },
@@ -90,7 +90,7 @@ describe('MongoDbIntensityStore', () => {
         {
           replaceOne: {
             filter: {
-              sourceId: 'electricitymaps',
+              sourceId: 'entsoe',
               zoneId: 'GB',
               granularity: 'hour',
               periodStart: stored.periodStart,
@@ -126,13 +126,13 @@ describe('MongoDbIntensityStore', () => {
     const store = storeWith(client)
     await store.put([point()])
     await store.get(
-      'electricitymaps',
+      'entsoe',
       'GB',
       utc('2026-01-01'),
       utc('2026-01-02'),
       'hour',
     )
-    await store.purge('electricitymaps', utc('2026-11-01'))
+    await store.purge('entsoe', utc('2026-11-01'))
     expect(client.connect).toHaveBeenCalledTimes(1)
     expect(collection.createIndex).toHaveBeenCalledTimes(1)
     expect(collection.createIndex).toHaveBeenCalledWith(
