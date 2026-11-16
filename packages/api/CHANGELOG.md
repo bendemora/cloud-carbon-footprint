@@ -1,5 +1,20 @@
 # @cloud-carbon-footprint/api
 
+## 2.1.0
+
+### Minor Changes
+
+- 5524680: cli: add the `grid-intensity-doctor` command (`yarn workspace @cloud-carbon-footprint/cli grid-intensity-doctor`). For every AWS, GCP and Azure region it prints what each configured grid intensity source can deliver: its zone, the best quality tier for the last 24 hours, 30 days and 12 months, the licence state, any error and the attribution text. It needs no cloud credentials. api: add `GET /api/grid-intensity/capabilities`, which returns the same report as JSON. With the default configuration every region is tier D from the static factors.
+
+### Patch Changes
+
+- Updated dependencies [a77aded]
+- Updated dependencies [c9f1734]
+- Updated dependencies [6528b05]
+- Updated dependencies [2600e47]
+  - @cloud-carbon-footprint/grid-intensity@0.2.0
+  - @cloud-carbon-footprint/app@2.1.0
+
 ## 2.0.1
 
 ### Patch Changes
