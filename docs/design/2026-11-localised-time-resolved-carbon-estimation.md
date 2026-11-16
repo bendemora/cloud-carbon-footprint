@@ -441,7 +441,7 @@ Each phase is one or more PRs to `trunk` on the fork, each through the pre-commi
 | 4 | Availability-zone attribution, region-aware AWS PUE, `PUE_OVERRIDES` | M | 3 | Zone rows present for EC2, EBS and RDS; docs state the attribution semantics; provenance marks overrides |
 | 5 | Model version and manifest, `export-factor-table`, published schema and changelog | M | 2 | Factor table generated for all three providers with percentile columns; schema validated in CI |
 | 6 | `packages/provider-reports`: AWS, GCP, Azure ingestion; `CALIBRATION_MODE=report`, then `apply` | L | 3, 5 | Residual table produced for at least one provider on real data; apply mode changes rows only when enabled and stamps `CalibrationVersion` |
-| 7 | `export-dataset` with Parquet and CSV to S3, GCS, Azure Blob and local; licence manifest; Ternary integration docs; scheduled-run example | M | 3 (hourly), 6 optional | A Ternary BYOD integration on the EPEX tenant shows carbon next to cost by region and service |
+| 7 | `export-dataset` with Parquet and CSV to S3, GCS, Azure Blob and local; licence manifest; Ternary integration docs; scheduled-run example | M | 3 (hourly), 6 optional | A Ternary BYOD integration on a production tenant shows carbon next to cost by region and service |
 | 8 | Publishing: README and microsite pages, methodology page updates (bases, tiers, calibration), CONTRIBUTING for sources, NOTICE and attribution file, upstream PR candidates identified (hook fixes, Electricity Maps v4, hourly grouping), first tagged release | M | 1 to 7 | Fresh clone follows README to a tier-B daily run with no paid data |
 
 Suggested PR granularity inside a phase: interfaces and static source; one source per PR; resolver and wiring; CLI and API; docs. Keep each PR under about 800 changed lines where possible so the hook's test run stays useful.
@@ -477,7 +477,7 @@ Items to confirm against live services before the phase that depends on them. Ea
 2. ENTSO-E: that document type A75 (actual generation per production type) is on the free re-use list; token request lead time; per-zone resolution (PT15M vs PT60M). (Phase 2)
 3. EIA: exact route (`electricity/rto/fuel-type-data` assumed), facets (`respondent`, `fueltype`), throttling thresholds. (Phase 2)
 4. NESO: regional endpoint path and region ids; whether "actual" regional values exist or only forecasts for regions. (Phase 2)
-5. AWS CUR hourly: whether the EPEX report is hourly; Athena result-set sizes and cost at hourly grouping. (Phase 3)
+5. AWS CUR hourly: whether the target account's report is hourly; Athena result-set sizes and cost at hourly grouping. (Phase 3)
 6. AWS CCFT Data Export: table name, columns, region availability, both accounting methods. (Phase 6)
 7. Azure Carbon Optimization: accounting method behind the reported figures; stability of the preview API. (Phase 6)
 8. Parquet writer choice for Node without native dependencies, and Ternary's acceptance of its output. (Phase 7)
