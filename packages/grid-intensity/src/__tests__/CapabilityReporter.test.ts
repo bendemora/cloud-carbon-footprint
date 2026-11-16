@@ -62,6 +62,7 @@ describe('GridIntensityCapabilityReporter', () => {
         {
           provider: 'AWS',
           region: 'eu-west-2',
+          gridZoneId: 'GB',
           sources: [
             {
               sourceId: 'static',
@@ -77,6 +78,7 @@ describe('GridIntensityCapabilityReporter', () => {
         {
           provider: 'AWS',
           region: 'mars-north-1',
+          gridZoneId: null,
           sources: [expect.objectContaining({ zoneId: 'aws:Unknown' })],
         },
       ],
@@ -165,21 +167,21 @@ describe('GridIntensityCapabilityReporter', () => {
 
   describe('licence state', () => {
     const commercial: FakeSourceOptions = {
-      id: 'electricitymaps',
-      licence: { id: 'commercial', attribution: 'Electricity Maps' },
+      id: 'licensed',
+      licence: { id: 'commercial', attribution: 'A licensed dataset' },
     }
 
     it('is needs-acknowledgement for a commercial source the operator has not listed, with what it would deliver', async () => {
       expect(await londonEntry(commercial)).toMatchObject({
         licenceState: 'needs-acknowledgement',
         bestTier: every('B'),
-        attribution: 'Electricity Maps',
+        attribution: 'A licensed dataset',
       })
     })
 
     it('is acknowledged once the operator lists the source', async () => {
       const result = await report([new FakeSource(commercial)], {
-        licenceAcknowledgements: ['electricitymaps'],
+        licenceAcknowledgements: ['licensed'],
       })
       expect(result.regions[0].sources[0].licenceState).toBe('acknowledged')
     })
@@ -267,41 +269,28 @@ describe('GridIntensityCapabilityReporter', () => {
     })
   })
 
-  describe('legacy Electricity Maps v3 lookup', () => {
-    const state = {
-      sourceId: 'electricitymaps-v3',
-      qualityTier: 'C' as const,
-      message: 'The v3 lookup is in use.',
-    }
-    const regions: ProviderRegion[] = [
-      LONDON,
-      { provider: 'AWS', region: 'Unknown' },
-      { provider: 'AWS', region: 'mars-north-1' },
-      { provider: 'GCP', region: 'europe-west2' },
-    ]
-
-    it('states that the lookup is in use and gives each region its zone, or null', async () => {
-      const result = await new GridIntensityCapabilityReporter({
-        resolver: new GridIntensityResolver({ sources: [staticSource()] }),
-        regions,
-        legacyElectricityMaps: {
-          state,
-          zones: { AWS: { 'eu-west-2': 'GB', Unknown: null } },
-        },
-        now: () => NOW,
-      }).capabilities()
-
-      expect(result.legacyElectricityMaps).toEqual(state)
-      expect(
-        result.regions.map((region) => region.legacyElectricityMapsZoneId),
-      ).toEqual(['GB', null, null, null])
-    })
-
-    it('is absent from the report when the lookup is not in use', async () => {
-      const result = await report([staticSource()], { regions })
-      expect(result).not.toHaveProperty('legacyElectricityMaps')
-      for (const region of result.regions)
-        expect(region).not.toHaveProperty('legacyElectricityMapsZoneId')
+  describe('grid zone', () => {
+    it('gives each region its zone in the grid zone registry, or null when it has none', async () => {
+      const result = await report([staticSource()], {
+        regions: [
+          LONDON,
+          { provider: 'GCP', region: 'us-central1' },
+          { provider: 'AZURE', region: 'norwayeast' },
+          { provider: 'AWS', region: 'Unknown' },
+          { provider: 'AWS', region: 'mars-north-1' },
+          { provider: 'GCP', region: 'us' },
+          { provider: 'ALI', region: 'eu-west-1' },
+        ],
+      })
+      expect(result.regions.map((region) => region.gridZoneId)).toEqual([
+        'GB',
+        'US-MIDW-MISO',
+        'NO-NO1',
+        null,
+        null,
+        null,
+        null,
+      ])
     })
   })
 })

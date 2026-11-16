@@ -43,8 +43,10 @@ export interface GridIntensityResolverOptions {
   /** Source ids the operator asserts they are licensed to use. */
   licenceAcknowledgements?: string[]
   /**
-   * How long capability answers, failures, warnings and session-retention
-   * points are kept. Default 24.
+   * How long capability answers, failures and warnings are kept, and the
+   * longest that session-retention points and preliminary points are held
+   * (they are released together, by the first resolve call after it).
+   * Default 24.
    */
   capabilityTtlHours?: number
   /** CCF energy model version stamped on provenance. Default 'unversioned'. */
@@ -72,7 +74,15 @@ export interface SourceView {
 }
 
 export class NoIntensityAvailableError extends Error {
-  constructor(provider: CloudProvider, region: string) {
+  constructor(
+    provider: CloudProvider,
+    region: string,
+    /**
+     * Whether a configured source could serve the period on a later run, so
+     * whatever the caller falls back to is provisional (ADR 0025).
+     */
+    readonly mayImprove: boolean = false,
+  ) {
     super(`No grid intensity source can serve ${provider} region ${region}`)
     this.name = 'NoIntensityAvailableError'
   }
@@ -92,6 +102,17 @@ interface Resolution {
   resolved: ResolvedIntensity
   /** Covered fraction of the usage period, 0 to 1. */
   coverage: number
+}
+
+/** What one source gave for a usage period. */
+interface Attempt {
+  resolution: Resolution | null
+  /**
+   * The store could not be read, so points it holds were not seen. The
+   * result may be worse than the same configuration gives when the store
+   * works.
+   */
+  storeUnread: boolean
 }
 
 const TIER_RANK: Record<QualityTier, number> = { A: 0, B: 1, C: 2, D: 3 }
@@ -121,6 +142,18 @@ const preferred = (
   return r.coverage > best.coverage ? r : best
 }
 
+/** The result, marked provisional when a later run could improve on it. */
+const marked = (
+  resolved: ResolvedIntensity,
+  isProvisional: boolean,
+): ResolvedIntensity =>
+  isProvisional
+    ? {
+        ...resolved,
+        provenance: { ...resolved.provenance, isProvisional: true },
+      }
+    : resolved
+
 /**
  * Picks the best available source for each usage period and returns the
  * time-weighted intensity with provenance (section 6.2 of the design).
@@ -133,6 +166,9 @@ const preferred = (
  * kind within the TTL, so the default resolver, which lives for the process
  * (one CLI run, or the life of the API server), logs a recurring failure
  * again each TTL.
+ *
+ * A result is marked provisional (ADR 0025) when one of the sources tried
+ * for it could serve more of the period on a later run: see mayServeMore.
  */
 export class GridIntensityResolver implements IntensityResolver {
   private readonly sources: GridIntensitySource[]
@@ -160,8 +196,9 @@ export class GridIntensityResolver implements IntensityResolver {
   /** Stand-ins for capabilities that could not be probed (see capability()). */
   private readonly unprobed = new WeakSet<ZoneCapability>()
   /**
-   * Points of session-retention sources: never in the configured store, and
-   * released by the first resolve call after the TTL.
+   * Points of session-retention sources, and preliminary points of every
+   * source: never in the configured store, and released by the first
+   * resolve call after the TTL.
    */
   private session = new InMemoryIntensityStore()
   private sessionExpiresAt = 0
@@ -196,6 +233,8 @@ export class GridIntensityResolver implements IntensityResolver {
     // The first result that covers the period wins; failing that, the best
     // partial one.
     let best: Resolution | null = null
+    // Whether a source tried so far could serve more of the period later.
+    let mayImprove = false
     const coarser: Candidate[] = []
     for (const source of this.sources) {
       const candidate = await this.candidate(source, provider, region)
@@ -205,30 +244,84 @@ export class GridIntensityResolver implements IntensityResolver {
         coarser.push(candidate)
         continue
       }
-      const resolution = await this.resolveFrom(
+      const attempt = await this.resolveFrom(
         candidate,
         start,
         end,
         usageGranularity,
       )
-      if (isFinal(resolution, best)) return resolution.resolved
+      const { resolution } = attempt
+      mayImprove ||= this.mayServeMore(
+        candidate,
+        attempt,
+        start,
+        end,
+        usageGranularity,
+      )
+      if (isFinal(resolution, best))
+        return marked(resolution.resolved, mayImprove)
       best = preferred(best, resolution)
     }
     const rank = (c: Candidate) =>
       GRANULARITIES.indexOf(finestOf(c.capability.granularities))
     coarser.sort((a, b) => rank(a) - rank(b))
     for (const candidate of coarser) {
-      const resolution = await this.resolveFrom(
+      const attempt = await this.resolveFrom(
         candidate,
         start,
         end,
         usageGranularity,
       )
-      if (isFinal(resolution, best)) return resolution.resolved
+      const { resolution } = attempt
+      mayImprove ||= this.mayServeMore(
+        candidate,
+        attempt,
+        start,
+        end,
+        usageGranularity,
+      )
+      if (isFinal(resolution, best))
+        return marked(resolution.resolved, mayImprove)
       best = preferred(best, resolution)
     }
-    if (best) return best.resolved
-    throw new NoIntensityAvailableError(provider, region)
+    if (best) return marked(best.resolved, mayImprove)
+    throw new NoIntensityAvailableError(provider, region, mayImprove)
+  }
+
+  /**
+   * Whether the source could serve more of the usage period on a later run
+   * than it did on this one (ADR 0025). It could when settled points do not
+   * cover the whole period and the part that is missing is one the source
+   * can be asked for: not published yet, a gap, still preliminary, or not
+   * fetched because a request failed. The resolver only asks for whole
+   * periods of the granularity that start at or after the start of the
+   * source's data, so what lies before the first such period will never be
+   * served and does not count. Two cases cannot be judged and count as
+   * able to serve more: the window is not known after a failed capability
+   * probe, and stored points were not seen after a failed store read.
+   */
+  private mayServeMore(
+    { capability }: Candidate,
+    { resolution, storeUnread }: Attempt,
+    start: Date,
+    end: Date,
+    usageGranularity: Granularity,
+  ): boolean {
+    const settled = (resolution?.resolved.points ?? []).filter(
+      (point) => !point.isPreliminary,
+    )
+    const covers = (from: Date): boolean =>
+      timeWeightedMean(settled, from, end)?.coverage === 1
+    if (covers(start)) return false
+    if (this.unprobed.has(capability) || storeUnread) return true
+    const { earliest } = capability
+    if (!earliest) return true
+    const granularity = granularityFor(capability, end, usageGranularity)
+    const boundary = startOfPeriod(earliest, granularity)
+    const firstServed =
+      boundary < earliest ? addPeriod(boundary, granularity) : boundary
+    if (firstServed <= start) return true
+    return firstServed < end && !covers(firstServed)
   }
 
   /**
@@ -348,21 +441,23 @@ export class GridIntensityResolver implements IntensityResolver {
     start: Date,
     end: Date,
     usageGranularity: Granularity,
-  ): Promise<Resolution | null> {
+  ): Promise<Attempt> {
     const { capability } = candidate
     if (this.unprobed.has(capability)) {
       // Fetches are stopped; use whatever granularity the store holds.
+      let storeUnread = false
       for (const granularity of GRANULARITIES) {
-        const resolution = await this.resolveAt(
+        const attempt = await this.resolveAt(
           candidate,
           granularity,
           start,
           end,
           usageGranularity,
         )
-        if (resolution) return resolution
+        storeUnread ||= attempt.storeUnread
+        if (attempt.resolution) return { ...attempt, storeUnread }
       }
-      return null
+      return { resolution: null, storeUnread }
     }
     const granularity = granularityFor(capability, end, usageGranularity)
     return this.resolveAt(candidate, granularity, start, end, usageGranularity)
@@ -374,11 +469,11 @@ export class GridIntensityResolver implements IntensityResolver {
     start: Date,
     end: Date,
     usageGranularity: Granularity,
-  ): Promise<Resolution | null> {
+  ): Promise<Attempt> {
     const persist = source.persist !== false
     const store =
       capability.licence.retention === 'session' ? this.session : this.store
-    const stored = persist
+    const read = persist
       ? await this.storedPoints(
           store,
           source.id,
@@ -388,13 +483,20 @@ export class GridIntensityResolver implements IntensityResolver {
           granularity,
         )
       : []
+    const storeUnread = read === null
+    const stored = read ?? []
+    // Preliminary points fetched earlier in the TTL (ADR 0025).
+    const held =
+      persist && store !== this.session
+        ? await this.session.get(source.id, zoneId, start, end, granularity)
+        : []
     const fetched: IntensityPoint[] = []
     const fetchable = this.failureOf(source.id, zoneId)
       ? []
       : periodsCovering(start, end, granularity).filter((period) =>
           isWithinWindow(period, capability),
         )
-    for (const range of missingPeriods(fetchable, stored)) {
+    for (const range of missingPeriods(fetchable, [...held, ...stored])) {
       try {
         const points = await source.fetch(
           zoneId,
@@ -408,20 +510,39 @@ export class GridIntensityResolver implements IntensityResolver {
         break
       }
     }
-    if (persist && fetched.length)
-      await this.storePoints(store, source.id, zoneId, fetched)
+    if (persist) {
+      // A preliminary point is kept in memory for the TTL, so the run does
+      // not ask for it again, and never reaches the configured store: a
+      // later run then fetches the settled value (ADR 0025).
+      const storable = (point: IntensityPoint): boolean =>
+        store === this.session || !point.isPreliminary
+      const settled = fetched.filter(storable)
+      const preliminary = fetched.filter((point) => !storable(point))
+      if (settled.length)
+        await this.storePoints(store, source.id, zoneId, settled)
+      if (preliminary.length) await this.session.put(preliminary)
+    }
 
+    // For one period, in rising order of preference: a held preliminary
+    // point, a preliminary point just fetched, a stored point, a settled
+    // point just fetched. So a preliminary value never replaces a settled
+    // one.
     const byStart = new Map<number, IntensityPoint>()
-    for (const point of [...stored, ...fetched])
+    for (const point of [
+      ...held,
+      ...fetched.filter((p) => p.isPreliminary),
+      ...stored,
+      ...fetched.filter((p) => !p.isPreliminary),
+    ])
       byStart.set(point.periodStart.getTime(), point)
     const points = [...byStart.values()]
       .filter((p) => p.periodStart < end && p.periodEnd > start)
       .sort((a, b) => a.periodStart.getTime() - b.periodStart.getTime())
 
     const mean = timeWeightedMean(points, start, end)
-    if (!mean) return null
+    if (!mean) return { resolution: null, storeUnread }
     const isEstimated = mean.coverage < 1 || points.some((p) => p.isEstimated)
-    return {
+    const resolution: Resolution = {
       coverage: mean.coverage,
       resolved: {
         gCO2ePerKWh: mean.gCO2ePerKWh,
@@ -445,6 +566,7 @@ export class GridIntensityResolver implements IntensityResolver {
         },
       },
     }
+    return { resolution, storeUnread }
   }
 
   /**
@@ -514,6 +636,7 @@ export class GridIntensityResolver implements IntensityResolver {
       : undefined
   }
 
+  /** The stored points, or null when the store could not be read. */
   private async storedPoints(
     store: IntensityStore,
     sourceId: string,
@@ -521,7 +644,7 @@ export class GridIntensityResolver implements IntensityResolver {
     start: Date,
     end: Date,
     granularity: Granularity,
-  ): Promise<IntensityPoint[]> {
+  ): Promise<IntensityPoint[] | null> {
     const warning = `store|read|${sourceId}|${zoneId}`
     try {
       const points = await store.get(sourceId, zoneId, start, end, granularity)
@@ -533,7 +656,7 @@ export class GridIntensityResolver implements IntensityResolver {
         warning,
         `Grid intensity store read failed for source ${sourceId}, zone ${zoneId}: ${messageOf(error)}`,
       )
-      return []
+      return null
     }
   }
 

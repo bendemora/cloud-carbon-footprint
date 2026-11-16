@@ -16,7 +16,10 @@ import {
   StorageEstimator,
   UnknownEstimator,
 } from '@cloud-carbon-footprint/core'
-import { ALI_CLOUD_CONSTANTS } from '../domain'
+import {
+  ALI_CLOUD_CONSTANTS,
+  ALI_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
+} from '../domain'
 import { AliCostAndUsageService } from '../lib'
 
 jest.mock('@cloud-carbon-footprint/common', () => ({
@@ -109,6 +112,61 @@ describe('Ali Cost And Usage Service', () => {
         groupBy: grouping,
       },
     ]
-    expect(result).toEqual(expectedResult)
+    // ADR 0024: the row also says how much of its energy is electricity and
+    // how much of its emissions is embodied. Both are checked against the
+    // totals, then left out of the comparison with upstream's expectation.
+    const [{ operationalKilowattHours, embodiedCo2e, ...legacyEstimate }] =
+      result[0].serviceEstimates
+    const factor =
+      ALI_EMISSIONS_FACTORS_METRIC_TON_PER_KWH[legacyEstimate.region] ??
+      ALI_EMISSIONS_FACTORS_METRIC_TON_PER_KWH.Unknown
+    expect(embodiedCo2e).toBeGreaterThan(0)
+    expect(operationalKilowattHours).toBeLessThan(legacyEstimate.kilowattHours)
+    expect(operationalKilowattHours * factor + embodiedCo2e).toBeCloseTo(
+      legacyEstimate.co2e,
+      12,
+    )
+    expect([{ ...result[0], serviceEstimates: [legacyEstimate] }]).toEqual(
+      expectedResult,
+    )
+  })
+
+  it('gives a row with no co2e value neither field of ADR 0024', async () => {
+    // No service period: the usage hours, and with them the estimate, are
+    // not a number.
+    ;(getUsageSpy as jest.Mock).mockResolvedValue({
+      body: {
+        data: {
+          totalCount: 1,
+          items: [
+            {
+              billAccountID: billAccountID,
+              billAccountName: billAccountName,
+              servicePeriodUnit: '月',
+              productCode: 'ecs',
+              instanceConfig: '实例规格:2核 8G;CPU:2核;内存:8GBMB',
+              instanceSpec: 'ecs.g7.large',
+              region: '西南1（成都）',
+              cashAmount: 0,
+            },
+          ],
+        },
+      },
+    })
+    const result = await new AliCostAndUsageService(
+      new ComputeEstimator(),
+      new StorageEstimator(ALI_CLOUD_CONSTANTS.SSDCOEFFICIENT),
+      new StorageEstimator(ALI_CLOUD_CONSTANTS.HDDCOEFFICIENT),
+      new NetworkingEstimator(ALI_CLOUD_CONSTANTS.NETWORKING_COEFFICIENT),
+      new MemoryEstimator(ALI_CLOUD_CONSTANTS.MEMORY_COEFFICIENT),
+      new UnknownEstimator(ALI_CLOUD_CONSTANTS.ESTIMATE_UNKNOWN_USAGE_BY),
+      new EmbodiedEmissionsEstimator(
+        ALI_CLOUD_CONSTANTS.SERVER_EXPECTED_LIFESPAN,
+      ),
+    ).getEstimates(startDate, endDate, grouping)
+    const [estimate] = result[0].serviceEstimates
+    expect(estimate.co2e).toBeNaN()
+    expect(estimate).not.toHaveProperty('operationalKilowattHours')
+    expect(estimate).not.toHaveProperty('embodiedCo2e')
   })
 })

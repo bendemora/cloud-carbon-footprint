@@ -34,6 +34,8 @@ export interface FakeSourceOptions {
   failProbe?: boolean
   /** omit the points for these period starts (ISO strings) */
   omit?: string[]
+  /** whether the point for a period is preliminary; default none is */
+  preliminary?: (periodStart: Date) => boolean
 }
 
 export interface FetchCall {
@@ -52,6 +54,10 @@ export class FakeSource implements GridIntensitySource {
   probeCalls = 0
   failCapabilities: boolean
   failFetch: boolean
+  /** Tests change these to let a later fetch return more, or settled, data. */
+  omit: string[]
+  preliminary: (periodStart: Date) => boolean
+  latest: Date | undefined
 
   constructor(private readonly options: FakeSourceOptions = {}) {
     this.id = options.id ?? 'fake'
@@ -64,6 +70,9 @@ export class FakeSource implements GridIntensitySource {
     }
     this.failCapabilities = options.failCapabilities ?? false
     this.failFetch = options.failFetch ?? false
+    this.omit = options.omit ?? []
+    this.preliminary = options.preliminary ?? (() => false)
+    this.latest = options.latest
   }
 
   async probe(): Promise<SourceStatus> {
@@ -85,7 +94,7 @@ export class FakeSource implements GridIntensitySource {
       zoneId,
       granularities: this.options.granularities ?? ['hour', 'day'],
       earliest: this.options.earliest,
-      latest: this.options.latest,
+      latest: this.latest,
       bases: ['location-consumption'],
       licence: this.licence,
     }
@@ -105,7 +114,7 @@ export class FakeSource implements GridIntensitySource {
     })
     if (this.failFetch) throw new Error('401 Unauthorized')
     const value = this.options.value ?? (() => 100)
-    const omit = new Set(this.options.omit ?? [])
+    const omit = new Set(this.omit)
     return periodsCovering(start, end, granularity)
       .filter((p) => !omit.has(p.start.toISOString()))
       .map((p) => ({
@@ -117,6 +126,7 @@ export class FakeSource implements GridIntensitySource {
         basis: 'location-consumption' as const,
         factorType: 'lifecycle' as const,
         isEstimated: this.options.isEstimated ?? false,
+        ...(this.preliminary(p.start) && { isPreliminary: true }),
         sourceId: this.id,
         retrievedAt: new Date('2026-11-05T12:00:00.000Z'),
       }))

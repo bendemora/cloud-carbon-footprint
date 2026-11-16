@@ -16,17 +16,63 @@ import { mergeProvenance } from './provenance'
 
 export default interface FootprintEstimate {
   timestamp: Date
+  /**
+   * A legacy total (ADR 0024), not an energy measure: the electricity the
+   * usage is modelled to consume, plus its embodied emissions expressed as
+   * energy at the grid factor applied to the row. operationalKilowattHours
+   * is the energy.
+   */
   kilowattHours: number
+  /** Metric tons CO2e, operational and embodied together. */
   co2e: number
   usesAverageCPUConstant?: boolean
   /** Where the grid intensity behind co2e came from. */
   provenance?: Provenance
+  /**
+   * The electricity the usage is modelled to consume, PUE and replication
+   * included, in kilowatt hours (ADR 0024).
+   */
+  operationalKilowattHours?: number
+  /**
+   * The metric tons CO2e from hardware manufacturing attributed to the
+   * usage (ADR 0024). Operational emissions are co2e less this.
+   */
+  embodiedCo2e?: number
+}
+
+/**
+ * Marks an estimate whose energy is all electricity consumed and whose
+ * emissions are all operational: storage, networking, memory, and compute
+ * with no embodied part (ADR 0024). An estimate that already has either
+ * field is returned as it is, and so is one with no co2e value (an AWS
+ * instance type that cannot be sized), which has nothing to split.
+ */
+export const asOperationalEstimate = <Estimate extends FootprintEstimate>(
+  estimate: Estimate,
+): Estimate => {
+  if (
+    estimate.operationalKilowattHours !== undefined ||
+    estimate.embodiedCo2e !== undefined ||
+    !Number.isFinite(estimate.co2e)
+  )
+    return estimate
+  return {
+    ...estimate,
+    operationalKilowattHours: estimate.kilowattHours,
+    embodiedCo2e: 0,
+  }
 }
 
 export type KilowattHourTotals = {
   usageAmount?: number
   cost?: number
+  /** The legacy total, embodied emissions expressed as energy included. */
   kilowattHours: number
+  /**
+   * The operational energy alone (ADR 0024). Recorded once it differs from
+   * kilowattHours; a total without it is read as all operational.
+   */
+  operationalKilowattHours?: number
 }
 
 export type KilowattHoursByServiceAndUsageUnit = {
@@ -92,26 +138,85 @@ export interface MutableServiceEstimate {
   usesAverageCPUConstant: boolean
   tags?: TagCollection
   provenance?: Provenance
+  operationalKilowattHours?: number
+  embodiedCo2e?: number
 }
 
+/**
+ * Adds a row's energy to the running averages that unknown usage is
+ * estimated from. kilowattHours is what the provider puts in the average:
+ * the row's legacy total on AWS and Azure, and the energy of the row's
+ * compute, storage or memory on Google Cloud, which leaves embodied
+ * emissions out. When it holds embodied emissions,
+ * operationalKilowattHours is the energy without them (ADR 0024); it
+ * defaults to kilowattHours.
+ */
 export const accumulateKilowattHours = (
   kilowattHoursByServiceAndUsageUnit: KilowattHoursByServiceAndUsageUnit,
   billingDataRow: BillingDataRow,
   kilowattHours: number,
   accumulateBy: AccumulateKilowattHoursBy,
+  operationalKilowattHours: number = kilowattHours,
 ): void => {
   setOrAccumulateByServiceAndUsageUnit(
     kilowattHoursByServiceAndUsageUnit,
     billingDataRow,
     kilowattHours,
     accumulateBy,
+    operationalKilowattHours,
   )
   setOrAccumulateUsageUnitTotals(
     kilowattHoursByServiceAndUsageUnit,
     billingDataRow,
     kilowattHours,
     accumulateBy,
+    operationalKilowattHours,
   )
+}
+
+/**
+ * The operational energy in a running total. A total that has none recorded
+ * holds no embodied emissions, so all of it is operational.
+ */
+export const operationalKilowattHoursOf = (
+  totals: KilowattHourTotals,
+): number => totals.operationalKilowattHours ?? totals.kilowattHours
+
+/**
+ * A new running total. The operational sum is recorded only when it differs
+ * from the legacy total, so totals of usage with no embodied emissions keep
+ * the shape they have always had.
+ */
+const newTotals = (
+  accumulateBy: AccumulateKilowattHoursBy,
+  accumValue: number,
+  kilowattHours: number,
+  operationalKilowattHours: number,
+): KilowattHourTotals => ({
+  [accumulateBy]: accumValue,
+  kilowattHours: kilowattHours,
+  ...(!Object.is(operationalKilowattHours, kilowattHours) && {
+    operationalKilowattHours,
+  }),
+})
+
+const addToTotals = (
+  totals: KilowattHourTotals,
+  accumulateBy: AccumulateKilowattHoursBy,
+  accumValue: number,
+  kilowattHours: number,
+  operationalKilowattHours: number,
+): void => {
+  totals[accumulateBy] = (totals[accumulateBy] || 0) + accumValue
+  // Before the legacy total grows: a total with no operational sum is read
+  // as all operational.
+  if (
+    totals.operationalKilowattHours !== undefined ||
+    !Object.is(operationalKilowattHours, kilowattHours)
+  )
+    totals.operationalKilowattHours =
+      operationalKilowattHoursOf(totals) + operationalKilowattHours
+  totals.kilowattHours += kilowattHours
 }
 
 const setOrAccumulateByServiceAndUsageUnit = (
@@ -119,16 +224,19 @@ const setOrAccumulateByServiceAndUsageUnit = (
   billingDataRow: BillingDataRow,
   kilowattHours: number,
   accumulateBy: AccumulateKilowattHoursBy,
+  operationalKilowattHours: number,
 ): void => {
   const { serviceName, usageUnit, [accumulateBy]: accumValue } = billingDataRow
 
   // Service doesn't exist: set service and usage unit
   if (!kilowattHoursByServiceAndUsageUnit[serviceName]) {
     kilowattHoursByServiceAndUsageUnit[serviceName] = {
-      [usageUnit]: {
-        [accumulateBy]: accumValue,
-        kilowattHours: kilowattHours,
-      },
+      [usageUnit]: newTotals(
+        accumulateBy,
+        accumValue,
+        kilowattHours,
+        operationalKilowattHours,
+      ),
     }
     return
   }
@@ -138,21 +246,24 @@ const setOrAccumulateByServiceAndUsageUnit = (
     kilowattHoursByServiceAndUsageUnit[serviceName] &&
     !kilowattHoursByServiceAndUsageUnit[serviceName][usageUnit]
   ) {
-    kilowattHoursByServiceAndUsageUnit[serviceName][usageUnit] = {
-      [accumulateBy]: accumValue,
-      kilowattHours: kilowattHours,
-    }
+    kilowattHoursByServiceAndUsageUnit[serviceName][usageUnit] = newTotals(
+      accumulateBy,
+      accumValue,
+      kilowattHours,
+      operationalKilowattHours,
+    )
     return
   }
 
   // Usage unit exists for service - accumulate
   if (kilowattHoursByServiceAndUsageUnit[serviceName][usageUnit]) {
-    kilowattHoursByServiceAndUsageUnit[serviceName][usageUnit][accumulateBy] =
-      (kilowattHoursByServiceAndUsageUnit[serviceName][usageUnit][
-        accumulateBy
-      ] || 0) + accumValue
-    kilowattHoursByServiceAndUsageUnit[serviceName][usageUnit].kilowattHours +=
-      kilowattHours
+    addToTotals(
+      kilowattHoursByServiceAndUsageUnit[serviceName][usageUnit],
+      accumulateBy,
+      accumValue,
+      kilowattHours,
+      operationalKilowattHours,
+    )
   }
 }
 
@@ -161,19 +272,24 @@ const setOrAccumulateUsageUnitTotals = (
   billingDataRow: BillingDataRow,
   kilowattHours: number,
   accumulateBy: AccumulateKilowattHoursBy,
+  operationalKilowattHours: number,
 ): void => {
   const { usageUnit, [accumulateBy]: accumValue } = billingDataRow
   if (kilowattHoursByServiceAndUsageUnit.total[usageUnit]) {
-    kilowattHoursByServiceAndUsageUnit.total[usageUnit][accumulateBy] =
-      (kilowattHoursByServiceAndUsageUnit.total[usageUnit][accumulateBy] || 0) +
-      accumValue
-    kilowattHoursByServiceAndUsageUnit.total[usageUnit].kilowattHours +=
-      kilowattHours
+    addToTotals(
+      kilowattHoursByServiceAndUsageUnit.total[usageUnit],
+      accumulateBy,
+      accumValue,
+      kilowattHours,
+      operationalKilowattHours,
+    )
   } else {
-    kilowattHoursByServiceAndUsageUnit.total[usageUnit] = {
-      [accumulateBy]: accumValue,
-      kilowattHours: kilowattHours,
-    }
+    kilowattHoursByServiceAndUsageUnit.total[usageUnit] = newTotals(
+      accumulateBy,
+      accumValue,
+      kilowattHours,
+      operationalKilowattHours,
+    )
   }
 }
 
@@ -198,6 +314,10 @@ export const appendOrAccumulateEstimatesByDay = (
     ...(footprintEstimate.provenance && {
       provenance: footprintEstimate.provenance,
     }),
+    ...(hasEnergySplit(footprintEstimate) && {
+      operationalKilowattHours: footprintEstimate.operationalKilowattHours,
+      embodiedCo2e: footprintEstimate.embodiedCo2e,
+    }),
   }
 
   const dayFoundInEstimate = results.find(
@@ -215,15 +335,37 @@ export const appendOrAccumulateEstimatesByDay = (
       })
 
     if (estimateFoundWithSameRegionAndServiceAccountAndTags) {
+      // The merged row says how it splits only if every part does (ADR 0024).
+      const bothSplit =
+        hasEnergySplit(estimateFoundWithSameRegionAndServiceAccountAndTags) &&
+        hasEnergySplit(serviceEstimate)
+      // When the parts differ in provenance their intensities are blended.
+      // Weighting by the electricity of each part keeps the identity of
+      // ADR 0024 on the merged row; parts that do not say how they split
+      // are weighted by the legacy total, as before.
       const provenance = mergeProvenance(
         estimateFoundWithSameRegionAndServiceAccountAndTags.provenance,
-        estimateFoundWithSameRegionAndServiceAccountAndTags.kilowattHours,
+        bothSplit
+          ? estimateFoundWithSameRegionAndServiceAccountAndTags.operationalKilowattHours
+          : estimateFoundWithSameRegionAndServiceAccountAndTags.kilowattHours,
         serviceEstimate.provenance,
-        serviceEstimate.kilowattHours,
+        bothSplit
+          ? serviceEstimate.operationalKilowattHours
+          : serviceEstimate.kilowattHours,
       )
       if (provenance)
         estimateFoundWithSameRegionAndServiceAccountAndTags.provenance =
           provenance
+
+      if (bothSplit) {
+        estimateFoundWithSameRegionAndServiceAccountAndTags.operationalKilowattHours +=
+          serviceEstimate.operationalKilowattHours
+        estimateFoundWithSameRegionAndServiceAccountAndTags.embodiedCo2e +=
+          serviceEstimate.embodiedCo2e
+      } else {
+        delete estimateFoundWithSameRegionAndServiceAccountAndTags.operationalKilowattHours
+        delete estimateFoundWithSameRegionAndServiceAccountAndTags.embodiedCo2e
+      }
 
       estimateFoundWithSameRegionAndServiceAccountAndTags.kilowattHours +=
         serviceEstimate.kilowattHours
@@ -252,6 +394,18 @@ export const appendOrAccumulateEstimatesByDay = (
     })
   }
 }
+
+interface EnergySplit {
+  operationalKilowattHours: number
+  embodiedCo2e: number
+}
+
+/** Whether an estimate carries both fields of ADR 0024. */
+const hasEnergySplit = <Estimate extends Partial<EnergySplit>>(
+  estimate: Estimate,
+): estimate is Estimate & EnergySplit =>
+  estimate.operationalKilowattHours !== undefined &&
+  estimate.embodiedCo2e !== undefined
 
 function hasSameRegionAndServiceAndAccountAndTags(
   estimateOne: MutableServiceEstimate,
