@@ -63,6 +63,7 @@ Do not bypass the hook. If a commit must be split to keep the hook's run meaning
 
 - Never commit tokens, `.env` files, cache files (`estimates.cache.*.json`), grid-intensity store files, or any dataset obtained under a commercial or non-commercial licence. The repository contains code, static reference constants and recorded test fixtures only.
 - Every data source has a licence declaration in code and an entry in `DATA_SOURCES.md` (phase 8). Attribution strings are part of the output, not an afterthought.
+- This repository is public. Never name a client or employer of the project owner, or anything that identifies one (a tenant, account, project or report name), in files, commit messages, branch names, pull requests or comments. Write generically instead, for example "a production tenant" or "the target account".
 
 ## Environment notes
 
