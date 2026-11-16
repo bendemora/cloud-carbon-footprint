@@ -49,6 +49,7 @@ const london = (
 ): CapabilityReport['regions'][number] => ({
   provider: 'AWS',
   region: 'eu-west-2',
+  gridZoneId: 'GB',
   sources,
 })
 
@@ -64,14 +65,15 @@ describe('formatCapabilityReport', () => {
         {
           provider: 'AZURE',
           region: 'qatarcentral',
+          gridZoneId: null,
           sources: [staticEntry('azure:Unknown')],
         },
       ],
     })
     expect(tableOf(output)).toEqual([
-      '| Provider | Region       | Source | Zone          | Last 24 hours | Last 30 days | Last 12 months | Licence | Error',
-      '| AWS      | eu-west-2    | static | aws:eu-west-2 | D             | D            | D              | open    |',
-      '| AZURE    | qatarcentral | static | azure:Unknown | D             | D            | D              | open    |',
+      '| Provider | Region       | Grid zone | Source | Source zone   | Last 24 hours | Last 30 days | Last 12 months | Licence | Error',
+      '| AWS      | eu-west-2    | GB        | static | aws:eu-west-2 | D             | D            | D              | open    |',
+      '| AZURE    | qatarcentral | -         | static | azure:Unknown | D             | D            | D              | open    |',
     ])
     expect(output).toContain('2026-11-10T12:00:00.000Z')
   })
@@ -82,7 +84,7 @@ describe('formatCapabilityReport', () => {
       regions: [
         london([
           liveEntry({
-            sourceId: 'electricitymaps',
+            sourceId: 'licensed-file',
             licenceState: 'needs-acknowledgement',
             error: 'HTTP 401',
           }),
@@ -97,9 +99,9 @@ describe('formatCapabilityReport', () => {
       ],
     })
     expect(tableOf(output)).toEqual([
-      '| Provider | Region    | Source          | Zone | Last 24 hours | Last 30 days | Last 12 months | Licence               | Error',
-      '| AWS      | eu-west-2 | electricitymaps | GB   | B             | B            | B              | needs-acknowledgement | HTTP 401',
-      '| AWS      | eu-west-2 | neso            | -    | -             | -            | -              | unavailable           |',
+      '| Provider | Region    | Grid zone | Source        | Source zone | Last 24 hours | Last 30 days | Last 12 months | Licence               | Error',
+      '| AWS      | eu-west-2 | GB        | licensed-file | GB          | B             | B            | B              | needs-acknowledgement | HTTP 401',
+      '| AWS      | eu-west-2 | GB        | neso          | -           | -             | -            | -              | unavailable           |',
     ])
   })
 
@@ -124,7 +126,7 @@ describe('formatCapabilityReport', () => {
       const cells = tableOf(output)[1]
         .split('|')
         .map((cell) => cell.trim())
-      expect(cells[7]).toBe(expectedCell)
+      expect(cells[8]).toBe(expectedCell)
     },
   )
 
@@ -134,7 +136,7 @@ describe('formatCapabilityReport', () => {
       regions: [london([])],
     })
     expect(tableOf(output)[1]).toBe(
-      '| AWS      | eu-west-2 | -      | -    | -             | -            | -              | -       |',
+      '| AWS      | eu-west-2 | GB        | -      | -           | -             | -            | -              | -       |',
     )
   })
 
@@ -149,6 +151,7 @@ describe('formatCapabilityReport', () => {
         {
           provider: 'AWS',
           region: 'eu-west-3',
+          gridZoneId: 'FR',
           sources: [
             liveEntry({ sourceId: 'file', attribution: 'Dataset two' }),
             liveEntry({ sourceId: 'neso', attribution: undefined }),
@@ -165,41 +168,11 @@ describe('formatCapabilityReport', () => {
       '  static: CCF static factors',
     ])
   })
-
-  it('states the Electricity Maps v3 lookup and adds the zone it uses for each region', () => {
-    const output = formatCapabilityReport({
-      generatedAt: GENERATED_AT,
-      legacyElectricityMaps: {
-        sourceId: 'electricitymaps-v3',
-        qualityTier: 'C',
-        message: 'The v3 lookup is in use, tier C.',
-      },
-      regions: [
-        {
-          ...london([staticEntry('aws:eu-west-2')]),
-          legacyElectricityMapsZoneId: 'GB',
-        },
-        {
-          provider: 'AWS',
-          region: 'Unknown',
-          sources: [staticEntry('aws:Unknown')],
-          legacyElectricityMapsZoneId: null,
-        },
-      ],
-    })
-    expect(output).toContain('The v3 lookup is in use, tier C.')
-    expect(tableOf(output)).toEqual([
-      '| Provider | Region    | Electricity Maps v3 zone | Source | Zone          | Last 24 hours | Last 30 days | Last 12 months | Licence | Error',
-      '| AWS      | eu-west-2 | GB                       | static | aws:eu-west-2 | D             | D            | D              | open    |',
-      '| AWS      | Unknown   | -                        | static | aws:Unknown   | D             | D            | D              | open    |',
-    ])
-  })
 })
 
 describe('gridIntensityDoctor', () => {
   // Run on the settings below alone, whatever the shell has set.
   const SETTINGS = [
-    'ELECTRICITY_MAPS_TOKEN',
     'GRID_INTENSITY_SOURCES',
     'GRID_INTENSITY_LICENCE_ACKNOWLEDGEMENTS',
     'GRID_INTENSITY_STORE',
@@ -255,6 +228,7 @@ describe('gridIntensityDoctor', () => {
         ,
         ,
         ,
+        ,
         source,
         ,
         last24Hours,
@@ -269,7 +243,9 @@ describe('gridIntensityDoctor', () => {
         error !== '',
     )
     expect(unexpected).toEqual([])
-    expect(cells.find((row) => row[2] === 'eu-west-2')[4]).toBe('aws:eu-west-2')
+    const london = cells.find((row) => row[2] === 'eu-west-2')
+    expect(london[3]).toBe('GB')
+    expect(london[5]).toBe('aws:eu-west-2')
   })
 
   it('closes the grid intensity store before it returns', async () => {

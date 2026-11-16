@@ -1,0 +1,5 @@
+---
+'@cloud-carbon-footprint/grid-intensity': patch
+---
+
+Resolver calls that overlap no longer each send their own request for the same data. The provider packages resolve the rows of several Azure subscriptions, and every recommendation, at the same time, and the API serves overlapping requests; with a source that fetches, each of those calls asked the source for the same period, and each waited its own timeout when the source did not answer. A call that has something to fetch now waits its turn for the zone of the source and then looks again, so it finds what the call before it stored, or the failure or the empty answer that call met. A call with nothing to fetch does not wait, and the static source is not affected. The points a source read before a request of a long range failed are kept and stored (`PartialFetchError`). The default resolver remembers for a minute what it read from the store for a series and usage period (`RecentReadsStore`, also exported with `RECENT_READ_MS`), so the rows of one region and period read the store once: measured with the LOCAL store, a row of a day of usage took 0.42 ms before and 0.03 ms after.
