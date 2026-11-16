@@ -41,7 +41,6 @@ import {
   AZURE_CLOUD_CONSTANTS,
   AZURE_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
 } from '../domain'
-import { AZURE_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES } from '../lib/AzureRegions'
 import { tonnesToGrams } from '@cloud-carbon-footprint/grid-intensity'
 
 const mockUsageDetails = { list: jest.fn() }
@@ -287,21 +286,16 @@ describe('Azure Consumption Management Service', () => {
     ).getEstimates(startDate, endDate, grouping)
 
     expect(mockResolveCalls.length).toBeGreaterThan(0)
-    for (const [
-      provider,
-      region,
-      start,
-      end,
-      table,
-      options,
-    ] of mockResolveCalls as [
-      string,
-      string,
-      Date,
-      Date,
-      unknown,
-      { legacyElectricityMapsZones: unknown },
-    ][]) {
+    for (const call of mockResolveCalls) {
+      // provider, region, period start, period end and the static table
+      expect(call).toHaveLength(5)
+      const [provider, region, start, end, table] = call as [
+        string,
+        string,
+        Date,
+        Date,
+        unknown,
+      ]
       expect(provider).toBe('AZURE')
       expect(region).toEqual(expect.any(String))
       // a day grouping: one whole day from the row's timestamp, exclusive end
@@ -309,9 +303,6 @@ describe('Azure Consumption Management Service', () => {
       expect(table).toEqual({
         factors: AZURE_EMISSIONS_FACTORS_METRIC_TON_PER_KWH,
       })
-      expect(options.legacyElectricityMapsZones).toBe(
-        AZURE_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-      )
     }
   })
 
@@ -367,7 +358,7 @@ describe('Azure Consumption Management Service', () => {
     it('applies the resolved intensity and its provenance to unknown-usage rows as well', async () => {
       const liveTonnesPerKWh = 0.0001
       const liveProvenance = {
-        sourceId: 'electricitymaps-v3',
+        sourceId: 'live-source',
         zoneId: 'TEST',
         granularity: 'hour',
         basis: 'location-consumption',

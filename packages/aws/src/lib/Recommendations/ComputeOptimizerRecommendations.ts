@@ -9,7 +9,7 @@ import {
   MemoryEstimator,
   StorageEstimator,
 } from '@cloud-carbon-footprint/core'
-import { Logger, RecommendationResult } from '@cloud-carbon-footprint/common'
+import { RecommendationResult } from '@cloud-carbon-footprint/common'
 import {
   lastFullUtcDay,
   resolveEmissionsFactors,
@@ -29,19 +29,15 @@ import AWSMemoryEstimatesBuilder from '../AWSMemoryEstimatesBuilder'
 import { SSD_USAGE_TYPES } from '../CostAndUsageTypes'
 import ComputeOptimizerRecommendation from './ComputeOptimizer/ComputeOptimizerRecommendation'
 import { AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH } from '../../domain'
-import { AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES } from '../AWSRegions'
 
 export default class ComputeOptimizerRecommendations implements ICloudRecommendationsService {
-  private readonly recommendationsLogger: Logger
   constructor(
     private readonly computeEstimator: ComputeEstimator,
     private readonly memoryEstimator: MemoryEstimator,
     private readonly ssdStorageEstimator: StorageEstimator,
     private readonly hddStorageEstimator: StorageEstimator,
     private readonly serviceWrapper: ServiceWrapper,
-  ) {
-    this.recommendationsLogger = new Logger('AWSRecommendations')
-  }
+  ) {}
 
   async getRecommendations(centralComputeOptimizerBucket: string) {
     const params = {
@@ -137,13 +133,11 @@ export default class ComputeOptimizerRecommendations implements ICloudRecommenda
                   const [currentComputeFootprint, currentMemoryFootprint] =
                     await this.getComputeAndMemoryFootprintEstimates(
                       currentComputeOptimizerRecommendation,
-                      this.recommendationsLogger,
                     )
 
                   const [targetComputeFootprint, targetMemoryFootprint] =
                     await this.getComputeAndMemoryFootprintEstimates(
                       targetComputeOptimizerRecommendation,
-                      this.recommendationsLogger,
                     )
 
                   kilowattHourSavings =
@@ -216,7 +210,6 @@ export default class ComputeOptimizerRecommendations implements ICloudRecommenda
 
   private async getComputeAndMemoryFootprintEstimates(
     computeOptimizerRecommendation: EC2CurrentComputeOptimizerRecommendation,
-    logger: Logger,
   ) {
     const period = lastFullUtcDay()
     const { factors: emissionsFactors } = await resolveEmissionsFactors(
@@ -225,11 +218,6 @@ export default class ComputeOptimizerRecommendations implements ICloudRecommenda
       period.start,
       period.end,
       { factors: AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH },
-      {
-        legacyElectricityMapsZones:
-          AWS_MAPPED_REGIONS_TO_ELECTRICITY_MAPS_ZONES,
-        logger: logger,
-      },
     )
     const computeFootprint = new AWSComputeEstimatesBuilder(
       computeOptimizerRecommendation,

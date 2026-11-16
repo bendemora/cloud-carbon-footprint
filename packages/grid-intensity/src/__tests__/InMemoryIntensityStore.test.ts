@@ -17,7 +17,7 @@ const point = (
   basis: 'location-consumption',
   factorType: 'lifecycle',
   isEstimated: false,
-  sourceId: 'electricitymaps',
+  sourceId: 'entsoe',
   retrievedAt: utc('2026-11-01T00:00:00.000Z'),
   ...overrides,
 })
@@ -33,7 +33,7 @@ describe('InMemoryIntensityStore', () => {
       point({ periodStart: h(0), periodEnd: h(1) }),
       point({ periodStart: h(1), periodEnd: h(2) }),
     ])
-    const points = await store.get('electricitymaps', 'GB', h(1), h(3), 'hour')
+    const points = await store.get('entsoe', 'GB', h(1), h(3), 'hour')
     expect(points.map((p) => p.periodStart)).toEqual([h(1), h(2)])
   })
 
@@ -49,11 +49,11 @@ describe('InMemoryIntensityStore', () => {
         granularity: 'day',
       }),
     ])
-    const points = await store.get('electricitymaps', 'GB', h(0), h(1), 'hour')
+    const points = await store.get('entsoe', 'GB', h(0), h(1), 'hour')
     expect(points).toHaveLength(1)
     expect(points[0]).toMatchObject({
       zoneId: 'GB',
-      sourceId: 'electricitymaps',
+      sourceId: 'entsoe',
       granularity: 'hour',
     })
   })
@@ -66,7 +66,7 @@ describe('InMemoryIntensityStore', () => {
     await store.put([
       point({ periodStart: h(0), periodEnd: h(1), gCO2ePerKWh: 120 }),
     ])
-    const points = await store.get('electricitymaps', 'GB', h(0), h(1), 'hour')
+    const points = await store.get('entsoe', 'GB', h(0), h(1), 'hour')
     expect(points.map((p) => p.gCO2ePerKWh)).toEqual([120])
   })
 
@@ -97,15 +97,9 @@ describe('InMemoryIntensityStore', () => {
       }),
     ])
     await expect(
-      store.purge('electricitymaps', utc('2026-11-01T00:00:00.000Z')),
+      store.purge('entsoe', utc('2026-11-01T00:00:00.000Z')),
     ).resolves.toBe(1)
-    const remaining = await store.get(
-      'electricitymaps',
-      'GB',
-      h(0),
-      h(2),
-      'hour',
-    )
+    const remaining = await store.get('entsoe', 'GB', h(0), h(2), 'hour')
     expect(remaining.map((p) => p.periodStart)).toEqual([h(1)])
     await expect(
       store.get('neso', 'GB', h(0), h(1), 'hour'),
