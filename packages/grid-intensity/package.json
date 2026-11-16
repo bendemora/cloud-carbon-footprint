@@ -1,6 +1,6 @@
 {
   "name": "@cloud-carbon-footprint/grid-intensity",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "Apache-2.0",
   "description": "Grid carbon intensity source layer: pluggable sources, capability negotiation, licence declarations and provenance for Cloud Carbon Footprint estimates.",
   "main": "src/index.ts",
