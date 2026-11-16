@@ -3,14 +3,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { setConfig } from '@cloud-carbon-footprint/common'
-import { App } from '@cloud-carbon-footprint/app'
+import { mkdtemp, readdir, rm, writeFile } from 'fs/promises'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import { GroupBy, setConfig } from '@cloud-carbon-footprint/common'
+import { App, MongoDbCacheManager } from '@cloud-carbon-footprint/app'
 import {
   CapabilityReport,
   MongoDbIntensityStore,
   SourceCapabilitySummary,
 } from '@cloud-carbon-footprint/grid-intensity'
 import gridIntensityDoctor, {
+  formatCachedPeriodCounts,
   formatCapabilityReport,
 } from '../../GridIntensityDoctor/gridIntensityDoctor'
 
@@ -49,6 +53,7 @@ const london = (
 ): CapabilityReport['regions'][number] => ({
   provider: 'AWS',
   region: 'eu-west-2',
+  gridZoneId: 'GB',
   sources,
 })
 
@@ -64,14 +69,15 @@ describe('formatCapabilityReport', () => {
         {
           provider: 'AZURE',
           region: 'qatarcentral',
+          gridZoneId: null,
           sources: [staticEntry('azure:Unknown')],
         },
       ],
     })
     expect(tableOf(output)).toEqual([
-      '| Provider | Region       | Source | Zone          | Last 24 hours | Last 30 days | Last 12 months | Licence | Error',
-      '| AWS      | eu-west-2    | static | aws:eu-west-2 | D             | D            | D              | open    |',
-      '| AZURE    | qatarcentral | static | azure:Unknown | D             | D            | D              | open    |',
+      '| Provider | Region       | Grid zone | Source | Source zone   | Last 24 hours | Last 30 days | Last 12 months | Licence | Error',
+      '| AWS      | eu-west-2    | GB        | static | aws:eu-west-2 | D             | D            | D              | open    |',
+      '| AZURE    | qatarcentral | -         | static | azure:Unknown | D             | D            | D              | open    |',
     ])
     expect(output).toContain('2026-11-10T12:00:00.000Z')
   })
@@ -82,7 +88,7 @@ describe('formatCapabilityReport', () => {
       regions: [
         london([
           liveEntry({
-            sourceId: 'electricitymaps',
+            sourceId: 'licensed-file',
             licenceState: 'needs-acknowledgement',
             error: 'HTTP 401',
           }),
@@ -97,9 +103,9 @@ describe('formatCapabilityReport', () => {
       ],
     })
     expect(tableOf(output)).toEqual([
-      '| Provider | Region    | Source          | Zone | Last 24 hours | Last 30 days | Last 12 months | Licence               | Error',
-      '| AWS      | eu-west-2 | electricitymaps | GB   | B             | B            | B              | needs-acknowledgement | HTTP 401',
-      '| AWS      | eu-west-2 | neso            | -    | -             | -            | -              | unavailable           |',
+      '| Provider | Region    | Grid zone | Source        | Source zone | Last 24 hours | Last 30 days | Last 12 months | Licence               | Error',
+      '| AWS      | eu-west-2 | GB        | licensed-file | GB          | B             | B            | B              | needs-acknowledgement | HTTP 401',
+      '| AWS      | eu-west-2 | GB        | neso          | -           | -             | -            | -              | unavailable           |',
     ])
   })
 
@@ -124,7 +130,7 @@ describe('formatCapabilityReport', () => {
       const cells = tableOf(output)[1]
         .split('|')
         .map((cell) => cell.trim())
-      expect(cells[7]).toBe(expectedCell)
+      expect(cells[8]).toBe(expectedCell)
     },
   )
 
@@ -134,7 +140,7 @@ describe('formatCapabilityReport', () => {
       regions: [london([])],
     })
     expect(tableOf(output)[1]).toBe(
-      '| AWS      | eu-west-2 | -      | -    | -             | -            | -              | -       |',
+      '| AWS      | eu-west-2 | GB        | -      | -           | -             | -            | -              | -       |',
     )
   })
 
@@ -149,6 +155,7 @@ describe('formatCapabilityReport', () => {
         {
           provider: 'AWS',
           region: 'eu-west-3',
+          gridZoneId: 'FR',
           sources: [
             liveEntry({ sourceId: 'file', attribution: 'Dataset two' }),
             liveEntry({ sourceId: 'neso', attribution: undefined }),
@@ -165,41 +172,44 @@ describe('formatCapabilityReport', () => {
       '  static: CCF static factors',
     ])
   })
+})
 
-  it('states the Electricity Maps v3 lookup and adds the zone it uses for each region', () => {
-    const output = formatCapabilityReport({
-      generatedAt: GENERATED_AT,
-      legacyElectricityMaps: {
-        sourceId: 'electricitymaps-v3',
-        qualityTier: 'C',
-        message: 'The v3 lookup is in use, tier C.',
-      },
-      regions: [
-        {
-          ...london([staticEntry('aws:eu-west-2')]),
-          legacyElectricityMapsZoneId: 'GB',
-        },
-        {
-          provider: 'AWS',
-          region: 'Unknown',
-          sources: [staticEntry('aws:Unknown')],
-          legacyElectricityMapsZoneId: null,
-        },
-      ],
-    })
-    expect(output).toContain('The v3 lookup is in use, tier C.')
-    expect(tableOf(output)).toEqual([
-      '| Provider | Region    | Electricity Maps v3 zone | Source | Zone          | Last 24 hours | Last 30 days | Last 12 months | Licence | Error',
-      '| AWS      | eu-west-2 | GB                       | static | aws:eu-west-2 | D             | D            | D              | open    |',
-      '| AWS      | Unknown   | -                        | static | aws:Unknown   | D             | D            | D              | open    |',
+describe('formatCachedPeriodCounts', () => {
+  it('prints one line for each grouping under a heading, and what a provisional period is when there is one', () => {
+    expect(
+      formatCachedPeriodCounts([
+        { groupBy: GroupBy.day, cachedPeriods: 14, provisionalPeriods: 3 },
+        { groupBy: GroupBy.month, cachedPeriods: 1, provisionalPeriods: 0 },
+      ]),
+    ).toEqual([
+      '',
+      'Cached estimates:',
+      '  day: 14 cached periods, 3 provisional',
+      '  month: 1 cached period, 0 provisional',
+      'A provisional period holds rows whose grid intensity can still improve. The refresh-estimates command estimates such periods again.',
     ])
+  })
+
+  it('leaves the explanation out when no period is provisional', () => {
+    expect(
+      formatCachedPeriodCounts([
+        { groupBy: GroupBy.week, cachedPeriods: 2, provisionalPeriods: 0 },
+      ]),
+    ).toEqual([
+      '',
+      'Cached estimates:',
+      '  week: 2 cached periods, 0 provisional',
+    ])
+  })
+
+  it('prints nothing when nothing is cached', () => {
+    expect(formatCachedPeriodCounts([])).toEqual([])
   })
 })
 
 describe('gridIntensityDoctor', () => {
   // Run on the settings below alone, whatever the shell has set.
   const SETTINGS = [
-    'ELECTRICITY_MAPS_TOKEN',
     'GRID_INTENSITY_SOURCES',
     'GRID_INTENSITY_LICENCE_ACKNOWLEDGEMENTS',
     'GRID_INTENSITY_STORE',
@@ -209,27 +219,34 @@ describe('gridIntensityDoctor', () => {
     'GCP_INCLUDE_ESTIMATES',
     'AZURE_INCLUDE_ESTIMATES',
     'GCP_USE_CARBON_FREE_ENERGY_PERCENTAGE',
+    'CACHE_MODE',
+    'CCF_CACHE_PATH',
+    'TEST_MODE',
   ]
   const saved: Record<string, string | undefined> = {}
   const closeStore = jest
     .spyOn(MongoDbIntensityStore.prototype, 'close')
     .mockResolvedValue(undefined)
+  // The directory the local estimates cache is in. It starts empty.
+  let cacheDirectory: string
 
   const configure = (settings: Record<string, string> = {}) => {
     Object.assign(process.env, settings)
     setConfig()
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
     for (const name of SETTINGS) {
       saved[name] = process.env[name]
       delete process.env[name]
     }
     closeStore.mockClear()
-    configure()
+    cacheDirectory = await mkdtemp(join(tmpdir(), 'doctor-cache-'))
+    configure({ CCF_CACHE_PATH: join(cacheDirectory, 'estimates.cache') })
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    await rm(cacheDirectory, { recursive: true, force: true })
     for (const name of SETTINGS) {
       if (saved[name] === undefined) delete process.env[name]
       else process.env[name] = saved[name]
@@ -255,6 +272,7 @@ describe('gridIntensityDoctor', () => {
         ,
         ,
         ,
+        ,
         source,
         ,
         last24Hours,
@@ -269,7 +287,9 @@ describe('gridIntensityDoctor', () => {
         error !== '',
     )
     expect(unexpected).toEqual([])
-    expect(cells.find((row) => row[2] === 'eu-west-2')[4]).toBe('aws:eu-west-2')
+    const london = cells.find((row) => row[2] === 'eu-west-2')
+    expect(london[3]).toBe('GB')
+    expect(london[5]).toBe('aws:eu-west-2')
   })
 
   it('closes the grid intensity store before it returns', async () => {
@@ -298,5 +318,192 @@ describe('gridIntensityDoctor', () => {
     await expect(gridIntensityDoctor()).rejects.toThrow('report failed')
     expect(closeStore).toHaveBeenCalledTimes(1)
     failing.mockRestore()
+  })
+
+  describe('the estimates cache', () => {
+    /** A cache file of the grouping with one period for each flag given. */
+    const seedCache = (grouping: string, provisional: boolean[]) =>
+      writeFile(
+        join(cacheDirectory, `estimates.cache.${grouping}.json`),
+        '[\n' +
+          provisional
+            .map((isProvisional, index) =>
+              JSON.stringify({
+                timestamp: new Date(Date.UTC(2026, index, 1)),
+                serviceEstimates: [
+                  {
+                    cloudProvider: 'AWS',
+                    serviceName: 'service',
+                    provenance: isProvisional ? { isProvisional } : {},
+                  },
+                ],
+                groupBy: grouping,
+              }),
+            )
+            .join('\n,\n') +
+          '\n]',
+      )
+
+    const afterTheTable = (output: string) => {
+      const lines = output.split('\n')
+      return lines.slice(lines.findIndex((line) => line === 'Attribution:'))
+    }
+
+    it('says nothing about it, and creates no cache file, when nothing is cached', async () => {
+      const output = await gridIntensityDoctor()
+
+      expect(afterTheTable(output)).toEqual([
+        'Attribution:',
+        expect.stringMatching(/^ {2}static: /),
+      ])
+      expect(await readdir(cacheDirectory)).toEqual([])
+    })
+
+    it('prints after the table how many periods of each grouping are cached and how many of them are provisional', async () => {
+      await seedCache('day', [false, true, true])
+      await seedCache('month', [false])
+
+      const output = await gridIntensityDoctor()
+
+      expect(tableOf(output).length).toBeGreaterThan(171)
+      expect(afterTheTable(output)).toEqual([
+        'Attribution:',
+        expect.stringMatching(/^ {2}static: /),
+        '',
+        'Cached estimates:',
+        '  day: 3 cached periods, 2 provisional',
+        '  month: 1 cached period, 0 provisional',
+        'A provisional period holds rows whose grid intensity can still improve. The refresh-estimates command estimates such periods again.',
+      ])
+    })
+
+    it('still prints the table when the cache cannot be read, and says why under it', async () => {
+      await writeFile(
+        join(cacheDirectory, 'estimates.cache.day.json'),
+        '[\n{"timestamp":"2026-11-01T00:00:00.000Z"}\n]',
+      )
+
+      const output = await gridIntensityDoctor()
+
+      expect(tableOf(output).length).toBeGreaterThan(171)
+      expect(afterTheTable(output)).toEqual([
+        'Attribution:',
+        expect.stringMatching(/^ {2}static: /),
+        '',
+        'The estimates cache could not be read: The estimates cache holds an entry that is not an estimation result: {"timestamp":"2026-11-01T00:00:00.000Z"}',
+      ])
+    })
+
+    describe('in MongoDB', () => {
+      let createDbConnection: jest.SpyInstance
+      const client = { close: jest.fn(), db: jest.fn() }
+
+      /** A client whose collections answer the query for their periods. */
+      const periodsIn = (periods: { [collection: string]: unknown[] }) =>
+        client.db.mockReturnValue({
+          collection: (name: string) => ({
+            aggregate: () => ({ toArray: async () => periods[name] ?? [] }),
+          }),
+        })
+
+      beforeEach(() => {
+        client.close.mockReset()
+        client.db.mockReset()
+        // What createDbConnection does when it can create a client.
+        createDbConnection = jest
+          .spyOn(MongoDbCacheManager, 'createDbConnection')
+          .mockImplementation(async () => {
+            MongoDbCacheManager.mongoClient = client as any
+          })
+        configure({
+          CACHE_MODE: 'MONGODB',
+          MONGODB_URI: 'mongodb://localhost:27017',
+        })
+      })
+
+      afterEach(() => {
+        createDbConnection.mockRestore()
+        MongoDbCacheManager.mongoClient = undefined
+      })
+
+      it('connects, counts the periods of each collection and closes the connection', async () => {
+        // The query answers for each period, cloud provider and region.
+        const rowsOf = (date: string, cloudProvider: string) => ({
+          timestamp: new Date(date),
+          cloudProvider,
+          region: 'eu-west-2',
+        })
+        periodsIn({
+          'estimates-by-day': [
+            {
+              _id: rowsOf('2026-11-01', 'AWS'),
+              provisional: 0,
+              worstTier: 'B',
+            },
+            {
+              _id: rowsOf('2026-11-02', 'AWS'),
+              provisional: 0,
+              worstTier: 'B',
+            },
+            {
+              _id: rowsOf('2026-11-02', 'GCP'),
+              provisional: 1,
+              worstTier: 'C',
+            },
+          ],
+        })
+
+        const output = await gridIntensityDoctor()
+
+        expect(afterTheTable(output).slice(2)).toEqual([
+          '',
+          'Cached estimates:',
+          '  day: 2 cached periods, 1 provisional',
+          'A provisional period holds rows whose grid intensity can still improve. The refresh-estimates command estimates such periods again.',
+        ])
+        expect(createDbConnection).toHaveBeenCalledTimes(1)
+        expect(client.close).toHaveBeenCalledTimes(1)
+      })
+
+      it('prints the table and the reason when no connection could be made', async () => {
+        // What createDbConnection does when it cannot: it logs and returns.
+        createDbConnection.mockImplementation(async () => undefined)
+
+        const output = await gridIntensityDoctor()
+
+        expect(tableOf(output).length).toBeGreaterThan(171)
+        expect(afterTheTable(output).slice(2)).toEqual([
+          '',
+          expect.stringMatching(
+            /^The estimates cache could not be read: There is no connection to MongoDB\./,
+          ),
+        ])
+      })
+
+      it('closes the connection when the report fails', async () => {
+        MongoDbCacheManager.mongoClient = client as any
+        const failing = jest
+          .spyOn(App.prototype, 'getGridIntensityCapabilities')
+          .mockRejectedValueOnce(new Error('report failed'))
+
+        await expect(gridIntensityDoctor()).rejects.toThrow('report failed')
+
+        expect(createDbConnection).not.toHaveBeenCalled()
+        expect(client.close).toHaveBeenCalledTimes(1)
+        failing.mockRestore()
+      })
+    })
+
+    it('does not connect to MongoDB when the estimates cache is elsewhere', async () => {
+      const createDbConnection = jest.spyOn(
+        MongoDbCacheManager,
+        'createDbConnection',
+      )
+
+      await gridIntensityDoctor()
+
+      expect(createDbConnection).not.toHaveBeenCalled()
+      createDbConnection.mockRestore()
+    })
   })
 })

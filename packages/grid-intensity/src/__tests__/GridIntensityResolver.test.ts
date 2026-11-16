@@ -467,7 +467,7 @@ describe('GridIntensityResolver', () => {
 
   describe('licence gating', () => {
     const commercial = () =>
-      new FakeSource({ id: 'electricitymaps', licence: { id: 'commercial' } })
+      new FakeSource({ id: 'licensed', licence: { id: 'commercial' } })
 
     it('skips a commercial source the operator has not acknowledged, warning once', async () => {
       const source = commercial()
@@ -493,7 +493,7 @@ describe('GridIntensityResolver', () => {
     it('uses a commercial source the operator has acknowledged', async () => {
       const { resolver } = createResolver({
         sources: [commercial(), staticSource()],
-        licenceAcknowledgements: ['electricitymaps'],
+        licenceAcknowledgements: ['licensed'],
       })
       const result = await resolver.resolve(
         'AWS',
@@ -502,7 +502,7 @@ describe('GridIntensityResolver', () => {
         DAY_END,
       )
       expect(result.provenance).toMatchObject({
-        sourceId: 'electricitymaps',
+        sourceId: 'licensed',
         licenceId: 'commercial',
       })
     })
@@ -1085,10 +1085,10 @@ describe('GridIntensityResolver', () => {
     it('marks the sources the operator has acknowledged', async () => {
       const { resolver } = createResolver({
         sources: [
-          new FakeSource({ id: 'electricitymaps' }),
+          new FakeSource({ id: 'licensed' }),
           new FakeSource({ id: 'other' }),
         ],
-        licenceAcknowledgements: ['electricitymaps'],
+        licenceAcknowledgements: ['licensed'],
       })
       const views = await resolver.sourceViews('AWS', 'eu-west-2')
       expect(views.map((view) => view.acknowledged)).toEqual([true, false])

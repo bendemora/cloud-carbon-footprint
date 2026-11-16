@@ -59,6 +59,14 @@ export interface IntensityPoint {
   basis: IntensityBasis
   factorType: EmissionFactorType
   isEstimated: boolean
+  /**
+   * True for a value the source will replace: a forecast, or an estimate
+   * that is not settled yet (ADR 0025). The resolver uses such a point, marks
+   * the result provisional, and keeps the point in memory for the capability
+   * TTL only: it is never written to the configured store, so a later run
+   * fetches the period again.
+   */
+  isPreliminary?: boolean
   sourceId: string
   retrievedAt: Date
 }
@@ -69,6 +77,10 @@ export interface ZoneCapability {
   /**
    * Start of the lookback window the caller may fetch. Unbounded when absent.
    * It limits fetches only: stored points from before it are still used.
+   * It also decides the provisional marker (ADR 0025): a usage period that
+   * lies before the first period the source can be asked for is final, and
+   * a source that leaves it out keeps every period it has no data for
+   * provisional.
    * The resolver fetches whole periods of the requested granularity and asks
    * only for periods that lie wholly in [earliest, latest], so a source
    * should report both on its own period boundaries (a monthly source: the
@@ -94,7 +106,7 @@ export interface SourceStatus {
 }
 
 export interface GridIntensitySource {
-  /** Stable identifier, for example 'electricitymaps', 'neso' or 'static'. */
+  /** Stable identifier, for example 'neso', 'entsoe' or 'static'. */
   readonly id: string
   /** Default licence for the source. Individual zones may narrow it. */
   readonly licence: LicenceDeclaration
@@ -109,6 +121,15 @@ export interface GridIntensitySource {
   capabilities(zoneId: string): Promise<ZoneCapability | null>
   /** The source's zone for a cloud region, or null when it has none. */
   mapRegion(provider: CloudProvider, region: string): string | null
+  /**
+   * The points of the range, or fewer when the source does not have them
+   * all. It throws when it cannot say: the resolver then stops asking for
+   * the zone for the capability TTL. A source that read part of the range
+   * before it failed throws a PartialFetchError with the points it read,
+   * and the resolver keeps them. An answer in a form the source does not
+   * know is a failure and not an empty list, so that a change of format
+   * does not pass for missing data.
+   */
   fetch(
     zoneId: string,
     start: Date,
@@ -117,7 +138,10 @@ export interface GridIntensitySource {
   ): Promise<IntensityPoint[]>
 }
 
-/** Persistence of fetched intensity points. */
+/**
+ * Persistence of fetched intensity points. The resolver never gives a
+ * preliminary point to the configured store (ADR 0025).
+ */
 export interface IntensityStore {
   get(
     sourceId: string,
@@ -192,35 +216,19 @@ export interface SourceCapabilitySummary {
 export interface RegionCapability {
   provider: CloudProvider
   region: string
+  /**
+   * The electricity grid the region is on, from the grid zone registry
+   * (design section 5.5), or null when the registry has no zone for it.
+   */
+  gridZoneId: string | null
   /** One entry per configured source, in GRID_INTENSITY_SOURCES order. */
   sources: SourceCapabilitySummary[]
-  /**
-   * The region's Electricity Maps zone in the legacy v3 lookup, or null when
-   * it has none and the region is left to the sources. Present only while
-   * that lookup is in use (CapabilityReport.legacyElectricityMaps).
-   */
-  legacyElectricityMapsZoneId?: string | null
-}
-
-/**
- * The Electricity Maps v3 lookup that resolveEmissionsFactors applies before
- * the sources while ELECTRICITY_MAPS_TOKEN is set and no v4 source exists.
- */
-export interface LegacyElectricityMapsState {
-  /** The source id on the provenance of its estimates. */
-  sourceId: string
-  /** The tier of the estimates it serves. */
-  qualityTier: QualityTier
-  /** The state in plain words, for the doctor output. */
-  message: string
 }
 
 /** Served by the doctor command and GET /api/grid-intensity/capabilities. */
 export interface CapabilityReport {
   generatedAt: Date
   regions: RegionCapability[]
-  /** Present only while the legacy Electricity Maps v3 lookup is in use. */
-  legacyElectricityMaps?: LegacyElectricityMapsState
 }
 
 export interface IntensityResolver {

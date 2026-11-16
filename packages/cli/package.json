@@ -42,7 +42,8 @@
     "create-azure-lookup": "ts-node src/CreateLookupTable/createAzureInput.ts",
     "estimate-on-premise-data": "ts-node src/EstimateOnPremiseData/index.ts",
     "seed-cache-file": "ts-node src/SeedCacheFile/index.ts",
-    "grid-intensity-doctor": "ts-node src/GridIntensityDoctor/index.ts"
+    "grid-intensity-doctor": "ts-node src/GridIntensityDoctor/index.ts",
+    "refresh-estimates": "ts-node src/RefreshEstimates/index.ts"
   },
   "devDependencies": {
     "@types/jest": "^29.5.12",

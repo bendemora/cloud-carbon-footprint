@@ -12,12 +12,11 @@ import {
 } from './GridIntensityResolver'
 import { requiresAcknowledgement } from './licence'
 import { deriveQualityTier } from './qualityTier'
+import { gridZoneOf } from './registry/gridZones'
 import {
   CapabilityReport,
   CapabilityReporter,
-  CloudProvider,
   Granularity,
-  LegacyElectricityMapsState,
   LicenceDeclaration,
   LicenceState,
   LookbackWindows,
@@ -32,14 +31,6 @@ export interface CapabilityReporterOptions {
   resolver: Pick<GridIntensityResolver, 'sourceViews'>
   /** The provider regions to report on, from the app layer. */
   regions: ProviderRegion[]
-  /**
-   * Given while the legacy Electricity Maps v3 lookup is in use: its state,
-   * and each provider's region to Electricity Maps zone map.
-   */
-  legacyElectricityMaps?: {
-    state: LegacyElectricityMapsState
-    zones: Partial<Record<CloudProvider, { [region: string]: string | null }>>
-  }
   now?: () => Date
 }
 
@@ -49,15 +40,17 @@ const DAY_MS = 24 * 60 * 60 * 1000
  * The usage period the tiers are for. A day is the finest CCF produces
  * (GroupBy); hourly usage, and with it tier A, comes with design section 7.
  */
-export const REPORT_USAGE_GRANULARITY: Granularity = 'day'
+const REPORT_USAGE_GRANULARITY: Granularity = 'day'
 
 /**
  * The report behind the doctor command and GET /api/grid-intensity/capabilities
- * (design section 6.5): for each provider region, what each configured source
- * can deliver and under which licence state.
+ * (design section 6.5): for each provider region, the grid zone it is on,
+ * what each configured source can deliver and under which licence state.
  *
- * It reads the resolver's capability answers and failures and calls no data
- * endpoint. Tiers come from each zone's capability (granularities and
+ * It reads the resolver's capability answers and failures and fetches no
+ * intensity data. Each source is probed once per capability TTL to see that
+ * it can be reached, which for a live source such as neso is one request.
+ * Tiers come from each zone's capability (granularities and
  * lookback window) by the rules the resolver applies to a day of usage, so
  * they are what a source offers, not a record of what it returned. Points
  * already in the store from before a source's lookback window are used by
@@ -67,22 +60,16 @@ export class GridIntensityCapabilityReporter implements CapabilityReporter {
   constructor(private readonly options: CapabilityReporterOptions) {}
 
   async capabilities(): Promise<CapabilityReport> {
-    const { resolver, regions, legacyElectricityMaps: legacy } = this.options
+    const { resolver, regions } = this.options
     const now = (this.options.now ?? (() => new Date()))()
-    const report: CapabilityReport = {
-      generatedAt: now,
-      ...(legacy && { legacyElectricityMaps: legacy.state }),
-      regions: [],
-    }
+    const report: CapabilityReport = { generatedAt: now, regions: [] }
     for (const { provider, region } of regions) {
       const views = await resolver.sourceViews(provider, region)
       report.regions.push({
         provider,
         region,
+        gridZoneId: gridZoneOf(provider, region),
         sources: views.map((view) => summarise(view, now)),
-        ...(legacy && {
-          legacyElectricityMapsZoneId: legacy.zones[provider]?.[region] ?? null,
-        }),
       })
     }
     return report

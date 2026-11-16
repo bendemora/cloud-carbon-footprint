@@ -31,12 +31,21 @@ import {
   AliAccount,
 } from '@cloud-carbon-footprint/ali'
 import { OnPremise } from '@cloud-carbon-footprint/on-premise'
-import { CapabilityReport } from '@cloud-carbon-footprint/grid-intensity'
 
 import cache from './Cache'
 import { EstimationRequest, RecommendationRequest } from './CreateValidRequest'
 import { includeCloudProviders } from './common/helpers'
-import { getGridIntensityCapabilities } from './GridIntensityCapabilities'
+import { CachedPeriodCount, countCachedPeriods } from './EstimatesCache'
+import {
+  getGridIntensityCapabilities,
+  GridIntensityCapabilities,
+  GridIntensityCapabilitiesOptions,
+} from './GridIntensityCapabilities'
+import {
+  refreshCachedEstimates,
+  RefreshRequest,
+  RefreshSummary,
+} from './RefreshEstimates'
 
 export const recommendationsMockPath = 'recommendations.mock.json'
 
@@ -45,14 +54,25 @@ export default class App {
   async getCostAndEstimates(
     request: EstimationRequest,
   ): Promise<EstimationResult[]> {
+    return this.getCostAndEstimatesWithoutCache(request)
+  }
+
+  /**
+   * The estimation that getCostAndEstimates caches: it asks the configured
+   * cloud providers for the request's dates and neither reads nor writes the
+   * estimates cache. The @cache() decorator calls the method it wraps on the
+   * prototype, not on an instance, so this is reached through the prototype
+   * too and must not use instance state.
+   */
+  async getCostAndEstimatesWithoutCache(
+    request: EstimationRequest,
+  ): Promise<EstimationResult[]> {
     const appLogger = new Logger('App')
     const { startDate, endDate, accounts, cloudProviderToSeed } = request
     const grouping = request.groupBy as GroupBy
     const config = configLoader()
     includeCloudProviders(cloudProviderToSeed, config)
     const { AWS, GCP, AZURE, ALI } = config
-    if (configLoader().ELECTRICITY_MAPS_TOKEN)
-      appLogger.info('Using Electricity Maps')
     if (process.env.TEST_MODE) {
       return []
     }
@@ -172,11 +192,35 @@ export default class App {
   }
 
   /**
-   * What each configured grid intensity source can deliver for each provider
-   * region: the doctor command and GET /api/grid-intensity/capabilities.
+   * Estimates cached periods again and replaces them in the estimates cache
+   * (ADR 0025): the refresh-estimates command. By default only the periods
+   * that hold provisional rows. Nothing else starts it: getCostAndEstimates
+   * and its cache never refresh a period that is cached.
    */
-  getGridIntensityCapabilities(): Promise<CapabilityReport> {
-    return getGridIntensityCapabilities()
+  refreshEstimates(request: RefreshRequest): Promise<RefreshSummary> {
+    return refreshCachedEstimates(request, (runRequest) =>
+      this.getCostAndEstimatesWithoutCache(runRequest),
+    )
+  }
+
+  /**
+   * How many periods the estimates cache holds for each grouping, and how
+   * many of them hold provisional rows. It reads the whole cache.
+   */
+  getCachedPeriodCounts(): Promise<CachedPeriodCount[]> {
+    return countCachedPeriods()
+  }
+
+  /**
+   * The grid zone of each provider region and what each configured grid
+   * intensity source can deliver for it: the doctor command and
+   * GET /api/grid-intensity/capabilities. With the cachedEstimates option
+   * the report also carries getCachedPeriodCounts.
+   */
+  getGridIntensityCapabilities(
+    options?: GridIntensityCapabilitiesOptions,
+  ): Promise<GridIntensityCapabilities> {
+    return getGridIntensityCapabilities(options)
   }
 
   async getRecommendations(

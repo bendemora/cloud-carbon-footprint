@@ -9,9 +9,9 @@ import {
   EstimationResult,
   Logger,
 } from '@cloud-carbon-footprint/common'
-import CacheManager from './CacheManager'
+import CacheManager, { CachedPeriod, DateRange } from './CacheManager'
 import { EstimationRequest } from './CreateValidRequest'
-import { getDatesWithinRequestTimeFrame } from './common/helpers'
+import { getDatesWithinRequestTimeFrame, QUALITY_TIERS } from './common/helpers'
 
 export default class MongoDbCacheManager extends CacheManager {
   static mongoClient: MongoClient
@@ -131,24 +131,133 @@ export default class MongoDbCacheManager extends CacheManager {
       const database = MongoDbCacheManager.mongoClient.db(this.mongoDbName)
       const collection = database.collection(collectionName)
 
-      const newEstimates: any[] = []
-      estimates.forEach((estimate) => {
-        estimate.serviceEstimates.forEach((serviceEstimate) => {
-          const newDocument = {
-            ...serviceEstimate,
-            timestamp: estimate['timestamp'],
-            groupBy: estimate['groupBy'],
-          }
-          newEstimates.push(newDocument)
-        })
-      })
-
-      await collection.insertMany(newEstimates)
+      await collection.insertMany(rowsOf(estimates))
     } catch (e) {
       this.cacheLogger.warn(
         `There was an error setting estimates from MongoDB: ${e.message}`,
       )
     }
+  }
+
+  /**
+   * Deletes the rows of the given periods and providers, then inserts the
+   * new rows. The two steps are not a transaction (ADR 0025). If the insert
+   * fails after the delete, the call fails and the periods are missing from
+   * the cache, so the next footprint request estimates them again. The rows
+   * are deleted first so that a failure between the two steps cannot leave a
+   * period with both its old and its new rows, which would count it twice.
+   */
+  async replaceEstimates(
+    estimates: EstimationResult[],
+    grouping: string,
+    cloudProviders?: string[],
+  ): Promise<void> {
+    if (!estimates.length) return
+    const collection = this.connectedDatabase().collection(
+      `estimates-by-${grouping}`,
+    )
+
+    const timestamps = [
+      ...new Set(
+        estimates.map(({ timestamp }) => new Date(timestamp).getTime()),
+      ),
+    ].map((time) => new Date(time))
+    await collection.deleteMany({
+      timestamp: { $in: timestamps },
+      ...(cloudProviders && {
+        cloudProvider: { $in: cloudProviders.map(matchingAnyCase) },
+      }),
+    })
+
+    const rows = rowsOf(estimates)
+    if (rows.length) await collection.insertMany(rows)
+  }
+
+  /**
+   * One query over the rows of the grouping. It answers with one document
+   * for each period, cloud provider and region, which are put together by
+   * period here. The worst tier of a provider and region is the greatest of
+   * the tiers of its rows, as text: A is the best tier and D the worst, and
+   * rows without provenance have none. A collection that does not exist has
+   * no rows, and reading it does not create it (loadEstimates does). No
+   * index serves the query yet; ADR 0025 expects one to be needed with
+   * hourly grouping.
+   */
+  async getCachedPeriods(
+    grouping: string,
+    range?: DateRange,
+  ): Promise<CachedPeriod[]> {
+    const collection = this.connectedDatabase().collection(
+      `estimates-by-${grouping}`,
+    )
+    const rowGroups = await collection
+      .aggregate(
+        [
+          ...(range
+            ? [
+                {
+                  $match: {
+                    timestamp: { $gte: range.startDate, $lte: range.endDate },
+                  },
+                },
+              ]
+            : []),
+          {
+            $group: {
+              _id: {
+                timestamp: '$timestamp',
+                cloudProvider: '$cloudProvider',
+                region: '$region',
+              },
+              provisional: {
+                $max: {
+                  $cond: [{ $eq: ['$provenance.isProvisional', true] }, 1, 0],
+                },
+              },
+              worstTier: { $max: '$provenance.qualityTier' },
+            },
+          },
+          { $sort: { '_id.timestamp': 1 } },
+        ],
+        { allowDiskUse: true },
+      )
+      .toArray()
+
+    const periods = new Map<number, CachedPeriod>()
+    for (const { _id, provisional, worstTier } of rowGroups) {
+      const time = new Date(_id.timestamp).getTime()
+      const period = periods.get(time) ?? {
+        timestamp: new Date(time),
+        isProvisional: false,
+        worstTiers: [],
+      }
+      period.isProvisional ||= provisional === 1
+      if (QUALITY_TIERS.includes(worstTier))
+        period.worstTiers.push({
+          cloudProvider: _id.cloudProvider,
+          region: _id.region,
+          qualityTier: worstTier,
+        })
+      periods.set(time, period)
+    }
+    return [...periods.values()]
+  }
+
+  locationOf(grouping: string): string {
+    return `MongoDB collection ${this.mongoDbName}.estimates-by-${grouping}`
+  }
+
+  /**
+   * The database, for replaceEstimates and getCachedPeriods. They fail with
+   * a message that says so when createDbConnection was not called or could
+   * not create a client.
+   */
+  private connectedDatabase() {
+    if (!MongoDbCacheManager.mongoClient)
+      throw new Error(
+        'There is no connection to MongoDB. Check MONGODB_URI and that the connection is created before the estimates cache is used.',
+      )
+    return MongoDbCacheManager.mongoClient.db(this.mongoDbName)
   }
 
   async getMissingDates(
@@ -324,6 +433,29 @@ export default class MongoDbCacheManager extends CacheManager {
     return aggregationStages
   }
 }
+
+/**
+ * The rows the estimates are stored as: one document for each service
+ * estimate, with the timestamp and groupBy of its EstimationResult.
+ */
+const rowsOf = (estimates: EstimationResult[]): any[] => {
+  const rows: any[] = []
+  estimates.forEach((estimate) => {
+    estimate.serviceEstimates.forEach((serviceEstimate) => {
+      const newDocument = {
+        ...serviceEstimate,
+        timestamp: estimate['timestamp'],
+        groupBy: estimate['groupBy'],
+      }
+      rows.push(newDocument)
+    })
+  })
+  return rows
+}
+
+/** A pattern that matches the provider name and nothing else, in any case. */
+const matchingAnyCase = (cloudProvider: string): RegExp =>
+  new RegExp(`^${cloudProvider.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i')
 
 /**
  * Builds one EstimationResult per timestamp from the stored rows, in the

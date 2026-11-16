@@ -23,6 +23,8 @@ export {
   default as FootprintEstimate,
   appendOrAccumulateEstimatesByDay,
   accumulateKilowattHours,
+  asOperationalEstimate,
+  operationalKilowattHoursOf,
   MutableEstimationResult,
   aggregateEstimatesByDay,
   getWattsByAverageOrMedian,
