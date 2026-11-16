@@ -405,11 +405,11 @@ use [EEA emissions factors](https://www.eea.europa.eu/en/analysis/maps-and-chart
 
 You can see the full list of emissions factors in Appendix V below.
 
-Since these data sources are averages over a given year that is pre-2023, and
-they also don’t take into account time of day. We have implemented the option to
-use [Electricty Maps API](https://api.electricitymap.org/), which provides realtime, historical and forecasted
-electricity emissions data. In order to use this feature, you will need to acquire and Electricity Maps API token. CCF
-will default to using the EPA eGRID2023 data if no token is provided.
+These data sources are annual averages, and they take no account of the time of day. This fork resolves grid
+intensity through a source layer, and records on each estimate made from billing data which source its factor came
+from. Sources that read grid operators and public agencies directly are being added; until then the only source is the
+static factors listed in Appendix V. See [Emissions Factors](../ConfigurationOptions/EmissionsFactors.md) for the
+sources and their settings. The Electricity Maps option that upstream CCF has is not part of this fork.
 
 
 ### Embodied Emissions
